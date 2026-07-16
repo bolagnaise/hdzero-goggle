@@ -339,7 +339,9 @@ static void page_wifi_update_settings() {
         }
 
         if (g_setting.wifi.ssh) {
-            system_exec("dropbear");
+            // -R generates missing host keys on first connection; the
+            // install script no longer pre-generates them at boot
+            system_exec("dropbear -R");
         }
     }
 }

@@ -5,8 +5,7 @@ ln -sfn /mnt/app/services/dropbear/dropbearmulti /bin/scp
 ln -sfn /mnt/app/services/dropbear/dropbearmulti /bin/ssh
 ln -sfn /mnt/app/services/dropbear/dropbearmulti /bin/dropbearkey
 
-# Generate host key once if it does not exist.
-if [ ! -e /etc/dropbear/dropbear_rsa_host_key ]; then
-    mkdir -p /etc/dropbear
-    /bin/dropbearkey -t rsa -f /etc/dropbear/dropbear_rsa_host_key
-fi
+# Host keys are generated lazily: dropbear is started with -R (see
+# page_wifi.c), which creates them on the first client connection instead
+# of burning 1-2s of CPU on RSA keygen during the first-boot install pass.
+mkdir -p /etc/dropbear
