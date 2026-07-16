@@ -56,6 +56,22 @@ mkfs.jffs2 \
     --eraseblock=0x10000 \
     --root=${APP_DIR} \
     --output=${APP_IMAGE}
+
+# Append JFFS2 summary nodes when sumtool is available: they let a kernel
+# with CONFIG_JFFS2_SUMMARY skip the full-partition scan when mounting
+# /mnt/app at boot. Summary nodes are tagged RWCOMPAT_DELETE, so images
+# remain fully compatible with kernels that lack summary support (they
+# just ignore/reclaim the nodes) - this is purely additive.
+if command -v sumtool > /dev/null 2>&1; then
+    sumtool \
+        --littleendian \
+        --eraseblock=0x10000 \
+        --input=${APP_IMAGE} \
+        --output=${APP_IMAGE}.sum \
+        && mv ${APP_IMAGE}.sum ${APP_IMAGE}
+else
+    echo "sumtool not found - skipping JFFS2 summary nodes"
+fi
 make_img_md5 ${APP_IMAGE}
 
 FILESIZE=$(stat -c%s "${APP_IMAGE}")
