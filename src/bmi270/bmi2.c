@@ -2226,8 +2226,21 @@ int8_t bmi2_write_config_file(struct bmi2_dev *dev)
         rslt = write_config_file(dev);
         if (rslt == BMI2_OK)
         {
-            /* Check the configuration load status */
-            rslt = bmi2_get_internal_status(&load_status, dev);
+            /* Poll the configuration load status instead of taking the
+             * blanket 140ms wait built into bmi2_get_internal_status(): the
+             * ASIC typically reports success within ~20ms (datasheet), and
+             * the old worst case is kept as the poll timeout. */
+            uint8_t poll;
+
+            for (poll = 0; poll < 15; poll++)
+            {
+                dev->delay_us(10000, dev->intf_ptr);
+                rslt = bmi2_get_regs(BMI2_INTERNAL_STATUS_ADDR, &load_status, 1, dev);
+                if ((rslt != BMI2_OK) || (load_status & BMI2_CONFIG_LOAD_SUCCESS))
+                {
+                    break;
+                }
+            }
 
             /* Return error if loading not successful */
             if ((rslt == BMI2_OK) && (!(load_status & BMI2_CONFIG_LOAD_SUCCESS)))
