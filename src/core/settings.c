@@ -31,7 +31,10 @@ const setting_t g_setting_defaults = {
         .right_speed = 5,
     },
     .autoscan = {
-        .status = SETTING_AUTOSCAN_STATUS_ON,
+        // LAST boots straight to the last channel (~2s faster to video, and
+        // no input-wait when several channels are live); a full scan stays
+        // available as opt-in via the menu
+        .status = SETTING_AUTOSCAN_STATUS_LAST,
         .last_source = SETTING_AUTOSCAN_SOURCE_LAST,
         .source = SETTING_AUTOSCAN_SOURCE_HDZERO,
     },
