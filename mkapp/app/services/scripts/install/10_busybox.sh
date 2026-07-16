@@ -17,5 +17,21 @@ if [ -z "$APPLETS" ]; then
     exit 1
 fi
 echo "$APPLETS" | while read -r applet; do
-    [ -n "$applet" ] && ln -sfn "$BB" "/$applet"
+    [ -n "$applet" ] || continue
+
+    # NEVER redirect early-boot-critical paths at /mnt/app: the kernel and
+    # rcS need them BEFORE /mnt/app is mounted. A dangling /sbin/init or
+    # /bin/sh permanently bricks the unit (recoverable only by reflashing
+    # the OS - the links live on the rootfs and survive app updates).
+    case "$applet" in
+        linuxrc|bin/sh|bin/ash|bin/mount|bin/umount|bin/login|sbin/init|sbin/mdev|sbin/getty|sbin/sulogin|sbin/switch_root|sbin/reboot|sbin/halt|sbin/poweroff|sbin/watchdog) continue ;;
+    esac
+
+    # keep the old generated script's guard semantics: anything already
+    # pointing at a busybox (including the rootfs busybox) is left alone
+    case "$(readlink "/$applet" 2> /dev/null)" in
+        *busybox*) continue ;;
+    esac
+
+    ln -sfn "$BB" "/$applet"
 done
