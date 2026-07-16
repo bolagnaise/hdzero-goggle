@@ -29,6 +29,7 @@
 #include "tp2825.h"
 #include "uart.h"
 #include "ui/ui_porting.h"
+#include "util/mem_reg.h"
 #include "util/system.h"
 
 /////////////////////////////////////////////////////////////////////////
@@ -546,7 +547,7 @@ void Display_UI_init() {
 
     system_exec("dispw -s vdpo 1080p50");
     g_hw_stat.vdpo_tmg = VDPO_TMG_1080P50;
-    system_exec("aww 0x0300b340 0x00000008");
+    hw_reg_write(0x0300b340, 0x00000008);
     Display_VO_SWITCH(0);
 
     vclk_phase_set(VIDEO_SOURCE_MENU_UI, 0);
@@ -555,9 +556,9 @@ void Display_UI_init() {
     I2C_Write(ADDR_FPGA, 0x84, 0x11);
 
     screen.vtmg(0);
-    system_exec("aww 0x0300b084 0x00003fff"); // Set vdpo clock driver strength to level 2. Refer datasheet 12.7.5.11
+    hw_reg_write(0x0300b084, 0x00003fff); // Set vdpo clock driver strength to level 2. Refer datasheet 12.7.5.11
     I2C_Write(ADDR_FPGA, 0xa7, 0x00);
-    system_exec("aww 0x06542018 0x00000044"); // disable horizontal chroma FIR filter.
+    hw_reg_write(0x06542018, 0x00000044); // disable horizontal chroma FIR filter.
 }
 
 void Display_UI() {
