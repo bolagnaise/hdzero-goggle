@@ -123,7 +123,10 @@ function check_mtd_write()
 
 echo "<<<<-------------------------------------------------------------------->>>>"
 
-if [ -e $VAbin ] | [ -e $RXbin ]; then 
+# NOTE: must be `||` — with `|` this was a pipeline whose status came only from
+# the RX test, so a VA-only update skipped gpio_export and flashed the FPGA
+# without holding it in reset.
+if [ -e $VAbin ] || [ -e $RXbin ]; then
 	gpio_export
  	beep 1
 fi

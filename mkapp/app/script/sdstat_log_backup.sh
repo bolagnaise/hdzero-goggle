@@ -49,6 +49,24 @@ function log_backup()
                         let index+=1
                 fi
         done
+
+        #retention: drop backups older than the newest ~50 indices so the
+        #directory (and the index scan above) stays bounded over device life
+        let prune_below=index-50
+        if [ "${prune_below}" -gt 0 ]
+        then
+                for file in ${dst}/*.log.*
+                do
+                        if [ -f "$file" ]
+                        then
+                                let index_i=${file##*.}
+                                if [ "${index_i}" -lt "${prune_below}" ]
+                                then
+                                        rm -f "$file"
+                                fi
+                        fi
+                done
+        fi
 }
 
 #if grep -qs '/mnt/extsd' /proc/mounts; then 

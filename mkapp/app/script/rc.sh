@@ -33,7 +33,16 @@ function config_uart_vdpo()
 
 function write_flashes()
 {
-	/mnt/app/script/write_flashes.sh
+	# Only spawn the updater when an update file is actually present on the
+	# SD card (saves a shell spawn + beep-path GPIO exports on every boot).
+	# Goggle2 shares Goggle v1 firmware file names (see write_flashes.sh).
+	local fw_prefix=$PLATFORM
+	if [ $PLATFORM == "HDZGOGGLE2" ]; then
+		fw_prefix=HDZGOGGLE
+	fi
+	if [ -e /mnt/extsd/${fw_prefix}_VA.bin ] || [ -e /mnt/extsd/${fw_prefix}_RX.bin ]; then
+		/mnt/app/script/write_flashes.sh
+	fi
 }
 
 function beep()
@@ -81,12 +90,14 @@ update_boot
 #auto write HDZERO_TX.bin / HDZERO_RX.bin /HDZERO_VA.bin when bootup if they are exist on SD card
 write_flashes
 
-#load driver 
-sleep 1
-insmod /mnt/app/ko/mcp3021.ko
-usleep 2000
-insmod /mnt/app/ko/nct75.ko
-usleep 2000
+#load hwmon drivers in the background — nothing below depends on them and the
+#app polls/retries their sysfs nodes, so the 1s settle no longer gates boot.
+#Order inside the subshell matters: nct75 assumes mcp3021 registered iio:device0.
+( sleep 1
+  insmod /mnt/app/ko/mcp3021.ko
+  usleep 2000
+  insmod /mnt/app/ko/nct75.ko
+  usleep 2000 ) &
 
 #set Microphone Bias Control Register
 aww 0x050967c0 0x110e6100
@@ -99,7 +110,8 @@ else
 	/mnt/app/app/record/record &
 fi
 
-/mnt/app/script/sdstat_log_backup.sh
+#log backup is not consumed by anything at boot — run it in the background
+/mnt/app/script/sdstat_log_backup.sh &
 
 	#system led
 if [ $PLATFORM == "HDZGOGGLE" ]; then
