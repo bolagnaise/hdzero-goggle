@@ -54,6 +54,20 @@ void dvr_set_race_label(const uint8_t *label, uint16_t len) {
     LOGI("dvr race label set to \"%s\"", dvr_race_label);
 }
 
+// Set/clear the boot-time fsck trigger (see DVR_DIRTY_MARKER in dvr.h). The
+// marker must be on flash before the first SD write of a recording, hence
+// the sync(); clearing is best-effort.
+void dvr_set_dirty_marker(bool dirty) {
+    if (dirty) {
+        FILE *fp = fopen(DVR_DIRTY_MARKER, "w");
+        if (fp)
+            fclose(fp);
+        sync();
+    } else {
+        unlink(DVR_DIRTY_MARKER);
+    }
+}
+
 ///////////////////////////////////////////////////////////////////
 //-1=error;
 // 0=idle,1=recording,2=stopped,3=No SD card,4=recorf file path error,
@@ -72,6 +86,10 @@ void dvr_update_status() {
             system_script(REC_STOP);
             record_pending = false;
             sleep(2);                         // wait for record process
+            // 0/2 = recorder reports idle/stopped cleanly; on error codes
+            // keep the dirty marker so the next boot checks the card
+            if (ret == 0 || ret == 2)
+                dvr_set_dirty_marker(false);
         }
     }
     pthread_mutex_unlock(&dvr_mutex);
@@ -380,6 +398,7 @@ void dvr_cmd(osd_dvr_cmd_t cmd) {
             if (g_sdcard_ready) {
                 dvr_is_recording = true;
                 record_pending = false;
+                dvr_set_dirty_marker(true); // before the first SD write
                 usleep(100 * 1000);
                 system_script(REC_START);
                 dvr_recording_start = time(NULL);
@@ -393,6 +412,7 @@ void dvr_cmd(osd_dvr_cmd_t cmd) {
             dvr_is_recording = false;
             system_script(REC_STOP);
             sleep(2); // wait for record process
+            dvr_set_dirty_marker(false);
         }
     }
 

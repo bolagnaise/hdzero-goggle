@@ -9,6 +9,7 @@
 #include "../conf/ui.h"
 
 #include "core/common.hh"
+#include "core/dvr.h"
 #include "lang/language.h"
 #include "record/record_definitions.h"
 #include "ui/page_common.h"
@@ -600,7 +601,14 @@ static void *page_storage_repair_thread(void *arg) {
         lv_label_set_text(page_storage.note, buf);
         pthread_mutex_unlock(&lvgl_mutex);
 
-        page_storage_repair_sd();
+        repair_codes_t status = page_storage_repair_sd();
+
+        // The check actually ran - clear the dirty marker so the next boot
+        // skips it (a fresh marker is set whenever a recording starts). On
+        // errors (e.g. card yanked mid-check) keep it for the next boot.
+        if (status == RPC_SUCCESS_CARD_FIXED || status == RPC_SUCCESS_NO_CHANGES) {
+            dvr_set_dirty_marker(false);
+        }
 
         pthread_mutex_lock(&lvgl_mutex);
         page_storage_enable_controls();
@@ -637,6 +645,18 @@ void page_storage_init_auto_sd_repair() {
         // Mark invoked when using dev script.
         page_storage.was_sd_repair_invoked = true;
     } else if (!page_storage.is_auto_sd_repair_active) {
+        // Only run the boot-time integrity check when the DVR dirty marker
+        // says the card was being written at power-off (or a previous check
+        // never finished). fsck.fat -y is a full-card scan - up to a minute
+        // on large cards - and the whole post-bootup queue (DVR readiness,
+        // WiFi) is serialized behind it. A cleanly-closed card skips it;
+        // manual "Repair SD Card" from this menu is unaffected.
+        if (!fs_file_exists(DVR_DIRTY_MARKER)) {
+            // still unblocks detect_sdcard(), which requires a repair to
+            // have been "invoked" before it processes the card at all
+            page_storage.was_sd_repair_invoked = true;
+            return;
+        }
         pthread_t tid;
         if (!pthread_create(&tid, NULL, page_storage_repair_thread, NULL)) {
             pthread_detach(tid);

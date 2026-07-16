@@ -15,6 +15,14 @@ typedef enum {
     DVR_START,
 } osd_dvr_cmd_t;
 
+// Marker on the (power-loss-safe) app partition recording that the SD card
+// was being written when the goggles last powered off. Its presence at boot
+// triggers the automatic fsck pass in page_storage.c; a cleanly-closed card
+// skips the check entirely.
+#define DVR_DIRTY_MARKER "/mnt/app/dvr_dirty"
+
+void dvr_set_dirty_marker(bool dirty);
+
 extern bool dvr_is_recording;
 extern bool record_pending;
 
