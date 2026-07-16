@@ -26,12 +26,11 @@ void self_test() {
     uint32_t dat0, dat1;
     char *msg[2] = {"[Error]", "[Pass] "};
 
-#ifdef HDZGOGGLE2
-    system_exec("dispw -s vdpo 1080p50");
-    system_exec("aww 0x0300b340 0x00000008");
-    system_exec("aww 0x0300b084 0x00002aaa"); // Set vdpo clock driver strength to level 2. Refer datasheet 12.7.5.11
-
-#endif
+    // Note: this used to unconditionally re-run the HDZGOGGLE2 vdpo setup
+    // (dispw -s vdpo 1080p50 + 0x0300b340/0x0300b084 pokes) before the
+    // selftest gate. That is redundant on every boot: rc.sh already sets the
+    // vdpo timing, and Display_UI_init() re-writes all three (with the final
+    // 0x3fff drive strength) before the screen is turned on.
 
     if (!g_setting.storage.selftest)
         return;

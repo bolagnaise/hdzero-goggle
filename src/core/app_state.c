@@ -12,6 +12,7 @@
 #include "driver/dm5680.h"
 #include "driver/dm6302.h"
 #include "driver/hardware.h"
+#include "driver/it66021.h"
 #include "driver/it66121.h"
 #include "driver/rtc6715.h"
 #include "driver/screen.h"
@@ -101,7 +102,9 @@ void app_switch_to_analog(bool is_av_in) {
     dvr_select_audio_source(g_setting.record.audio_source);
     dvr_enable_line_out(true);
 
-    sleep(1);
+    // Source_AV() above already completed the hardware video path; the other
+    // three REC_STOP_LIVE call sites issue it with no delay, so the fixed
+    // sleep(1) that used to sit here only cost time-to-interactive.
     system_script(REC_STOP_LIVE);
 }
 
@@ -120,7 +123,15 @@ void app_switch_to_hdmi_in() {
 
     Source_HDMI_in();
     IT66121_close();
-    sleep(2);
+    // Wait for the HDMI RX chip to report an input signal instead of a fixed
+    // sleep(2): with a source attached this exits in a few tens of ms. Poll
+    // the chip directly (not g_hw_stat.hdmiin_valid) — during boot the
+    // peripheral detect thread that updates the global is not running yet.
+    for (int waited_ms = 0; waited_ms < 2000; waited_ms += 50) {
+        if (IT66021_Sig_det())
+            break;
+        usleep(50 * 1000);
+    }
 
     if (g_hw_stat.hdmiin_vtmg == HDMIIN_VTMG_1080P60 ||
         g_hw_stat.hdmiin_vtmg == HDMIIN_VTMG_1080P50 ||

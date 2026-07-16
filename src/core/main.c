@@ -109,7 +109,9 @@ void start_running(void) {
             app_switch_to_analog(1);
             g_source_info.source = SOURCE_AV_IN;
         } else { // HDMI in
-            sleep(2);
+            // (a fixed sleep(2) used to sit here; its IT66021_Sig_det() gate
+            // below was commented out long ago, and app_switch_to_hdmi_in()
+            // now waits for the RX chip itself)
             // g_source_info.hdmi_in_status = IT66021_Sig_det();
             // if (g_source_info.hdmi_in_status) {
             app_switch_to_hdmi_in();
