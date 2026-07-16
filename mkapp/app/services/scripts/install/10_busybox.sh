@@ -10,6 +10,12 @@ BB=/mnt/app/services/busybox/busybox
 # binary again. Note busybox's own `--install -s` is NOT equivalent: it
 # refuses to overwrite existing non-link binaries, which the old script
 # deliberately did.
-$BB --list-full | while read -r applet; do
+APPLETS=$($BB --list-full 2> /dev/null)
+if [ -z "$APPLETS" ]; then
+    # guard against a future bundled busybox built without --list-full
+    echo "ERROR: $BB --list-full returned nothing - applet links NOT installed"
+    exit 1
+fi
+echo "$APPLETS" | while read -r applet; do
     [ -n "$applet" ] && ln -sfn "$BB" "/$applet"
 done
