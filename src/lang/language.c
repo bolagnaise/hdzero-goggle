@@ -74,33 +74,41 @@ int init_callback(const char *section, const char *key, const char *value, void 
     return 1;
 }
 
-void language_init() {
-    for (size_t i = 0; i < ARRAY_SIZE(languages); i++) {
-        char fileName[256];
-        sprintf(fileName, "%s/%s.ini", LANG_FOLDER, languages[i].code);
+static void language_load(size_t i) {
+    char fileName[256];
+    sprintf(fileName, "%s/%s.ini", LANG_FOLDER, languages[i].code);
 
-        INI_FILETYPE file;
-        if (!ini_openread(fileName, &file)) {
-            LOGE("Failed to open %s", fileName);
-            languages[i].translations = NULL;
-            continue;
-        }
-
-        // Load translations
-        translate_t *translations = calloc(TRANSLATE_STRING_NUM, sizeof(translate_t));
-        struct CallbackPayload payload = {.index = 0};
-        ini_browse(init_callback, &payload, fileName);
-
-        // Copy translations
-        memcpy(translations, payload.translations, sizeof(payload.translations));
-        languages[i].translations = translations;
-
-        for (size_t index = 0; index < TRANSLATE_STRING_NUM; index++) {
-            ; // LOGD("%s: %s", languages[i].translations[index].in_english, languages[i].translations[index].translate);
-        }
-
-        ini_close(&file);
+    INI_FILETYPE file;
+    if (!ini_openread(fileName, &file)) {
+        LOGE("Failed to open %s", fileName);
+        languages[i].translations = NULL;
+        return;
     }
+
+    // Load translations
+    translate_t *translations = calloc(TRANSLATE_STRING_NUM, sizeof(translate_t));
+    struct CallbackPayload payload = {.index = 0};
+    ini_browse(init_callback, &payload, fileName);
+
+    // Copy translations
+    memcpy(translations, payload.translations, sizeof(payload.translations));
+    languages[i].translations = translations;
+
+    ini_close(&file);
+}
+
+void language_init() {
+    // Only parse the active language's table: the language can only change
+    // via setting.ini between boots (nothing switches it at runtime), so
+    // parsing all shipped translation files at boot was wasted time. English
+    // needs no table, and translate_string() falls back to English if the
+    // configured file is missing.
+    const lang_e lang = g_setting.language.lang;
+
+    if (lang == LANG_ENGLISH_DEFAULT || lang >= ARRAY_SIZE(languages))
+        return;
+
+    language_load(lang);
 }
 
 const char *translate_string(const char *str, lang_e lang) {
@@ -108,6 +116,12 @@ const char *translate_string(const char *str, lang_e lang) {
         return str;
 
     const struct Language *const language = &languages[lang];
+
+    // fall back to English when the configured language file was missing or
+    // failed to parse (previously dereferenced NULL and crashed)
+    if (language->translations == NULL)
+        return str;
+
     const size_t keyLength = strlen(str);
     // search str translate
     for (int i = 0; i < TRANSLATE_STRING_NUM; i++) {
