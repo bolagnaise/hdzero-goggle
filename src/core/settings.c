@@ -1,7 +1,9 @@
 #include "settings.h"
 
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 
 #include <log/log.h>
@@ -282,23 +284,269 @@ int settings_put_osd_element(const setting_osd_goggle_element_t *element, char *
     return ret;
 }
 
-static void settings_load_osd_element(setting_osd_goggle_element_t *element, char *config_name, const setting_osd_goggle_element_t *defaults) {
-    char buf[128];
+// Mirrors minIni's ini_getl(): empty value -> default, "0x.."/"0X.." -> hex,
+// otherwise decimal.
+static long settings_parse_long(const char *value, long def) {
+    if (value[0] == '\0')
+        return def;
+    if (value[1] != '\0' && toupper((unsigned char)value[1]) == 'X')
+        return strtol(value, NULL, 16);
+    return strtol(value, NULL, 10);
+}
 
-    snprintf(buf, sizeof(buf), "element_%s_show", config_name);
-    element->show = settings_get_bool("osd", buf, defaults->show);
+// Mirrors settings_get_bool(): only the literal string "true" is true.
+static bool settings_parse_bool(const char *value) {
+    return strcmp(value, "true") == 0;
+}
 
-    snprintf(buf, sizeof(buf), "element_%s_pos_4_3_x", config_name);
-    element->position.mode_4_3.x = ini_getl("osd", buf, defaults->position.mode_4_3.x, SETTING_INI);
+// Mirrors ini_gets(): bounded copy, always NUL-terminated.
+static void settings_copy_str(char *dest, size_t size, const char *value) {
+    strncpy(dest, value, size - 1);
+    dest[size - 1] = '\0';
+}
 
-    snprintf(buf, sizeof(buf), "element_%s_pos_4_3_y", config_name);
-    element->position.mode_4_3.y = ini_getl("osd", buf, defaults->position.mode_4_3.y, SETTING_INI);
+// Config names of the OSD elements, indexed by osd_goggle_element_e. Must
+// match the names used with settings_put_osd_element() and friends.
+static const char *const settings_osd_element_names[OSD_GOGGLE_NUM] = {
+    [OSD_GOGGLE_TOPFAN_SPEED] = "topfan_speed",
+    [OSD_GOGGLE_LATENCY_LOCK] = "latency_lock",
+    [OSD_GOGGLE_VTX_TEMP] = "vtx_temp",
+    [OSD_GOGGLE_VRX_TEMP] = "vrx_temp",
+    [OSD_GOGGLE_BATTERY_LOW] = "battery_low",
+    [OSD_GOGGLE_BATTERY_VOLTAGE] = "battery_voltage",
+    [OSD_GOGGLE_CLOCK_DATE] = "clock_date",
+    [OSD_GOGGLE_CLOCK_TIME] = "clock_time",
+    [OSD_GOGGLE_CHANNEL] = "channel",
+    [OSD_GOGGLE_SD_REC] = "sd_rec",
+    [OSD_GOGGLE_VLQ] = "vlq",
+    [OSD_GOGGLE_ANT0] = "ant0",
+    [OSD_GOGGLE_ANT1] = "ant1",
+    [OSD_GOGGLE_ANT2] = "ant2",
+    [OSD_GOGGLE_ANT3] = "ant3",
+    [OSD_GOGGLE_TEMP_TOP] = "goggle_temp_top",
+    [OSD_GOGGLE_TEMP_LEFT] = "goggle_temp_left",
+    [OSD_GOGGLE_TEMP_RIGHT] = "goggle_temp_right",
+};
 
-    snprintf(buf, sizeof(buf), "element_%s_pos_16_9_x", config_name);
-    element->position.mode_16_9.x = ini_getl("osd", buf, defaults->position.mode_16_9.x, SETTING_INI);
+// Handles the "osd" section keys of the form element_<name>_<attr>, matching
+// the keys written by settings_put_osd_element().
+static void settings_load_osd_element_key(const char *key, const char *value) {
+    if (strncasecmp(key, "element_", 8) != 0)
+        return;
 
-    snprintf(buf, sizeof(buf), "element_%s_pos_16_9_y", config_name);
-    element->position.mode_16_9.y = ini_getl("osd", buf, defaults->position.mode_16_9.y, SETTING_INI);
+    const char *rest = key + 8;
+    for (int i = 0; i < OSD_GOGGLE_NUM; i++) {
+        const char *name = settings_osd_element_names[i];
+        size_t name_len = strlen(name);
+
+        if (strncasecmp(rest, name, name_len) != 0 || rest[name_len] != '_')
+            continue;
+
+        setting_osd_goggle_element_t *element = &g_setting.osd.element[i];
+        const char *attr = rest + name_len + 1;
+
+        if (strcasecmp(attr, "show") == 0)
+            element->show = settings_parse_bool(value);
+        else if (strcasecmp(attr, "pos_4_3_x") == 0)
+            element->position.mode_4_3.x = settings_parse_long(value, element->position.mode_4_3.x);
+        else if (strcasecmp(attr, "pos_4_3_y") == 0)
+            element->position.mode_4_3.y = settings_parse_long(value, element->position.mode_4_3.y);
+        else if (strcasecmp(attr, "pos_16_9_x") == 0)
+            element->position.mode_16_9.x = settings_parse_long(value, element->position.mode_16_9.x);
+        else if (strcasecmp(attr, "pos_16_9_y") == 0)
+            element->position.mode_16_9.y = settings_parse_long(value, element->position.mode_16_9.y);
+        return;
+    }
+}
+
+// Values that must not be applied to g_setting directly during the browse
+// pass (see settings_load for how they are consumed afterwards).
+typedef struct {
+    long lang;
+} settings_load_ctx_t;
+
+static int settings_load_browse_cb(const char *section, const char *key, const char *value, void *userdata) {
+    settings_load_ctx_t *ctx = (settings_load_ctx_t *)userdata;
+
+    if (strcasecmp(section, "scan") == 0) {
+        if (strcasecmp(key, "channel") == 0)
+            g_setting.scan.channel = settings_parse_long(value, g_setting.scan.channel);
+    } else if (strcasecmp(section, "fans") == 0) {
+        if (strcasecmp(key, "auto") == 0)
+            g_setting.fans.auto_mode = settings_parse_bool(value);
+        else if (strcasecmp(key, "top_speed") == 0)
+            g_setting.fans.top_speed = settings_parse_long(value, g_setting.fans.top_speed);
+        else if (strcasecmp(key, "left_speed") == 0)
+            g_setting.fans.left_speed = settings_parse_long(value, g_setting.fans.left_speed);
+        else if (strcasecmp(key, "right_speed") == 0)
+            g_setting.fans.right_speed = settings_parse_long(value, g_setting.fans.right_speed);
+    } else if (strcasecmp(section, "source") == 0) {
+        if (strcasecmp(key, "analog_format") == 0)
+            g_setting.source.analog_format = settings_parse_long(value, g_setting.source.analog_format);
+        else if (strcasecmp(key, "analog_ratio") == 0)
+            g_setting.source.analog_ratio = settings_parse_long(value, g_setting.source.analog_ratio);
+        else if (strcasecmp(key, "hdzero_band") == 0)
+            g_setting.source.hdzero_band = settings_parse_long(value, g_setting.source.hdzero_band);
+        else if (strcasecmp(key, "hdzero_bw") == 0)
+            g_setting.source.hdzero_bw = settings_parse_long(value, g_setting.source.hdzero_bw);
+        else if (strcasecmp(key, "analog_channel") == 0)
+            g_setting.source.analog_channel = settings_parse_long(value, g_setting.source.analog_channel);
+    } else if (strcasecmp(section, "autoscan") == 0) {
+        if (strcasecmp(key, "status") == 0)
+            g_setting.autoscan.status = settings_parse_long(value, g_setting.autoscan.status);
+        else if (strcasecmp(key, "source") == 0)
+            g_setting.autoscan.source = settings_parse_long(value, g_setting.autoscan.source);
+        else if (strcasecmp(key, "last_source") == 0)
+            g_setting.autoscan.last_source = settings_parse_long(value, g_setting.autoscan.last_source);
+    } else if (strcasecmp(section, "osd") == 0) {
+        if (strcasecmp(key, "orbit") == 0)
+            g_setting.osd.orbit = settings_parse_long(value, g_setting.osd.orbit);
+        else if (strcasecmp(key, "embedded_mode") == 0)
+            g_setting.osd.embedded_mode = settings_parse_long(value, g_setting.osd.embedded_mode);
+        else if (strcasecmp(key, "startup_visibility") == 0)
+            g_setting.osd.startup_visibility = settings_parse_long(value, g_setting.osd.startup_visibility);
+        else if (strcasecmp(key, "is_visible") == 0)
+            g_setting.osd.is_visible = settings_parse_bool(value);
+        else
+            settings_load_osd_element_key(key, value);
+    } else if (strcasecmp(section, "power") == 0) {
+        if (strcasecmp(key, "voltage_mv") == 0)
+            g_setting.power.voltage = settings_parse_long(value, g_setting.power.voltage);
+        else if (strcasecmp(key, "warning_type") == 0)
+            g_setting.power.warning_type = settings_parse_long(value, g_setting.power.warning_type);
+        else if (strcasecmp(key, "cell_count_mode") == 0)
+            g_setting.power.cell_count_mode = settings_parse_long(value, g_setting.power.cell_count_mode);
+        else if (strcasecmp(key, "cell_count") == 0)
+            g_setting.power.cell_count = settings_parse_long(value, g_setting.power.cell_count);
+        else if (strcasecmp(key, "osd_display_mode") == 0)
+            g_setting.power.osd_display_mode = settings_parse_long(value, g_setting.power.osd_display_mode);
+        else if (strcasecmp(key, "power_ana_rx") == 0)
+            g_setting.power.power_ana = settings_parse_long(value, g_setting.power.power_ana);
+        else if (strcasecmp(key, "calibration_offset_mv") == 0)
+            g_setting.power.calibration_offset = settings_parse_long(value, g_setting.power.calibration_offset);
+    } else if (strcasecmp(section, "record") == 0) {
+        if (strcasecmp(key, "mode_manual") == 0)
+            g_setting.record.mode_manual = settings_parse_bool(value);
+        else if (strcasecmp(key, "format_ts") == 0)
+            g_setting.record.format_ts = settings_parse_bool(value);
+        else if (strcasecmp(key, "bitrate_scale") == 0)
+            g_setting.record.bitrate_scale = settings_parse_long(value, g_setting.record.bitrate_scale);
+        else if (strcasecmp(key, "osd") == 0)
+            g_setting.record.osd = settings_parse_bool(value);
+        else if (strcasecmp(key, "audio") == 0)
+            g_setting.record.audio = settings_parse_bool(value);
+        else if (strcasecmp(key, "audio_source") == 0)
+            g_setting.record.audio_source = settings_parse_long(value, g_setting.record.audio_source);
+        else if (strcasecmp(key, "naming") == 0)
+            g_setting.record.naming = settings_parse_long(value, g_setting.record.naming);
+    } else if (strcasecmp(section, "image") == 0) {
+        if (strcasecmp(key, "oled") == 0)
+            g_setting.image.oled = settings_parse_long(value, g_setting.image.oled);
+        else if (strcasecmp(key, "brightness") == 0)
+            g_setting.image.brightness = settings_parse_long(value, g_setting.image.brightness);
+        else if (strcasecmp(key, "saturation") == 0)
+            g_setting.image.saturation = settings_parse_long(value, g_setting.image.saturation);
+        else if (strcasecmp(key, "contrast") == 0)
+            g_setting.image.contrast = settings_parse_long(value, g_setting.image.contrast);
+        else if (strcasecmp(key, "auto_off") == 0)
+            g_setting.image.auto_off = settings_parse_long(value, g_setting.image.auto_off);
+    } else if (strcasecmp(section, "ht") == 0) {
+        if (strcasecmp(key, "enable") == 0)
+            g_setting.ht.enable = settings_parse_bool(value);
+        else if (strcasecmp(key, "max_angle") == 0)
+            g_setting.ht.max_angle = settings_parse_long(value, g_setting.ht.max_angle);
+        else if (strcasecmp(key, "acc_x") == 0)
+            g_setting.ht.acc_x = settings_parse_long(value, g_setting.ht.acc_x);
+        else if (strcasecmp(key, "acc_y") == 0)
+            g_setting.ht.acc_y = settings_parse_long(value, g_setting.ht.acc_y);
+        else if (strcasecmp(key, "acc_z") == 0)
+            g_setting.ht.acc_z = settings_parse_long(value, g_setting.ht.acc_z);
+        else if (strcasecmp(key, "gyr_x") == 0)
+            g_setting.ht.gyr_x = settings_parse_long(value, g_setting.ht.gyr_x);
+        else if (strcasecmp(key, "gyr_y") == 0)
+            g_setting.ht.gyr_y = settings_parse_long(value, g_setting.ht.gyr_y);
+        else if (strcasecmp(key, "gyr_z") == 0)
+            g_setting.ht.gyr_z = settings_parse_long(value, g_setting.ht.gyr_z);
+        else if (strcasecmp(key, "alarm_state") == 0)
+            g_setting.ht.alarm_state = settings_parse_long(value, g_setting.ht.alarm_state);
+        else if (strcasecmp(key, "alarm_angle") == 0)
+            g_setting.ht.alarm_angle = settings_parse_long(value, g_setting.ht.alarm_angle);
+    } else if (strcasecmp(section, "elrs") == 0) {
+        if (strcasecmp(key, "enable") == 0)
+            g_setting.elrs.enable = settings_parse_bool(value);
+    } else if (strcasecmp(section, "clock") == 0) {
+        if (strcasecmp(key, "year") == 0)
+            g_setting.clock.year = settings_parse_long(value, g_setting.clock.year);
+        else if (strcasecmp(key, "month") == 0)
+            g_setting.clock.month = settings_parse_long(value, g_setting.clock.month);
+        else if (strcasecmp(key, "day") == 0)
+            g_setting.clock.day = settings_parse_long(value, g_setting.clock.day);
+        else if (strcasecmp(key, "hour") == 0)
+            g_setting.clock.hour = settings_parse_long(value, g_setting.clock.hour);
+        else if (strcasecmp(key, "min") == 0)
+            g_setting.clock.min = settings_parse_long(value, g_setting.clock.min);
+        else if (strcasecmp(key, "sec") == 0)
+            g_setting.clock.sec = settings_parse_long(value, g_setting.clock.sec);
+        else if (strcasecmp(key, "format") == 0)
+            g_setting.clock.format = settings_parse_long(value, g_setting.clock.format);
+    } else if (strcasecmp(section, "inputs") == 0) {
+        if (strcasecmp(key, "roller") == 0)
+            g_setting.inputs.roller = settings_parse_long(value, g_setting.inputs.roller);
+        else if (strcasecmp(key, "left_click") == 0)
+            g_setting.inputs.left_click = settings_parse_long(value, g_setting.inputs.left_click);
+        else if (strcasecmp(key, "left_press") == 0)
+            g_setting.inputs.left_press = settings_parse_long(value, g_setting.inputs.left_press);
+        else if (strcasecmp(key, "right_click") == 0)
+            g_setting.inputs.right_click = settings_parse_long(value, g_setting.inputs.right_click);
+        else if (strcasecmp(key, "right_press") == 0)
+            g_setting.inputs.right_press = settings_parse_long(value, g_setting.inputs.right_press);
+        else if (strcasecmp(key, "right_double_click") == 0)
+            g_setting.inputs.right_double_click = settings_parse_long(value, g_setting.inputs.right_double_click);
+    } else if (strcasecmp(section, "wifi") == 0) {
+        if (strcasecmp(key, "enable") == 0)
+            g_setting.wifi.enable = settings_parse_bool(value);
+        else if (strcasecmp(key, "mode") == 0)
+            g_setting.wifi.mode = settings_parse_long(value, g_setting.wifi.mode);
+        else if (strcasecmp(key, "clientid") == 0)
+            settings_copy_str(g_setting.wifi.clientid, WIFI_CLIENTID_MAX, value);
+        else if (strcasecmp(key, "ap_ssid") == 0)
+            settings_copy_str(g_setting.wifi.ssid[0], WIFI_SSID_MAX, value);
+        else if (strcasecmp(key, "ap_passwd") == 0)
+            settings_copy_str(g_setting.wifi.passwd[0], WIFI_PASSWD_MAX, value);
+        else if (strcasecmp(key, "sta_ssid") == 0)
+            settings_copy_str(g_setting.wifi.ssid[1], WIFI_SSID_MAX, value);
+        else if (strcasecmp(key, "sta_passwd") == 0)
+            settings_copy_str(g_setting.wifi.passwd[1], WIFI_PASSWD_MAX, value);
+        else if (strcasecmp(key, "dhcp") == 0)
+            g_setting.wifi.dhcp = settings_parse_bool(value);
+        else if (strcasecmp(key, "ip_addr") == 0)
+            settings_copy_str(g_setting.wifi.ip_addr, WIFI_NETWORK_MAX, value);
+        else if (strcasecmp(key, "netmask") == 0)
+            settings_copy_str(g_setting.wifi.netmask, WIFI_NETWORK_MAX, value);
+        else if (strcasecmp(key, "gateway") == 0)
+            settings_copy_str(g_setting.wifi.gateway, WIFI_NETWORK_MAX, value);
+        else if (strcasecmp(key, "dns") == 0)
+            settings_copy_str(g_setting.wifi.dns, WIFI_NETWORK_MAX, value);
+        else if (strcasecmp(key, "rf_channel") == 0)
+            g_setting.wifi.rf_channel = settings_parse_long(value, g_setting.wifi.rf_channel);
+        else if (strcasecmp(key, "root_pw") == 0)
+            settings_copy_str(g_setting.wifi.root_pw, sizeof(g_setting.wifi.root_pw), value);
+        else if (strcasecmp(key, "ssh") == 0)
+            g_setting.wifi.ssh = settings_parse_bool(value);
+    } else if (strcasecmp(section, "storage") == 0) {
+        if (strcasecmp(key, "logging") == 0)
+            g_setting.storage.logging = settings_parse_bool(value);
+    } else if (strcasecmp(section, "analog_rssi") == 0) {
+        if (strcasecmp(key, "calib_min") == 0)
+            g_setting.analog_rssi.calib_min = settings_parse_long(value, g_setting.analog_rssi.calib_min);
+        else if (strcasecmp(key, "calib_max") == 0)
+            g_setting.analog_rssi.calib_max = settings_parse_long(value, g_setting.analog_rssi.calib_max);
+    } else if (strcasecmp(section, "language") == 0) {
+        if (strcasecmp(key, "lang") == 0)
+            ctx->lang = settings_parse_long(value, ctx->lang);
+    }
+
+    return 1; // keep browsing
 }
 
 bool settings_get_bool(char *section, char *key, bool default_val) {
@@ -342,24 +590,27 @@ void settings_init(void) {
 }
 
 void settings_load(void) {
+    // Single-pass settings loader: every ini_getl()/ini_gets() call re-opens
+    // and re-scans the whole INI file, which is slow on JFFS2. This function
+    // used to issue ~170 such calls at boot; instead we pre-load g_setting
+    // with g_setting_defaults and let a single ini_browse() pass dispatch each
+    // (section, key, value) found in the file into its field. Keys absent from
+    // the file simply keep their defaults -- identical semantics to
+    // ini_getl(section, key, default).
+    // Note: if a key appears twice in the file, ini_getl() returns the FIRST
+    // occurrence while the browse callback applies the LAST one. The file is
+    // machine-written (one key per section), so this does not occur in
+    // practice.
+
     // Start with a fully configured structure then update!
     memcpy(&g_setting, &g_setting_defaults, sizeof(g_setting));
 
-    // scan
-    g_setting.scan.channel = ini_getl("scan", "channel", g_setting_defaults.scan.channel, SETTING_INI);
+    settings_load_ctx_t ctx = {
+        .lang = g_setting_defaults.language.lang,
+    };
+    ini_browse(settings_load_browse_cb, &ctx, SETTING_INI);
 
-    // fans
-    g_setting.fans.auto_mode = settings_get_bool("fans", "auto", g_setting_defaults.fans.auto_mode);
-    g_setting.fans.top_speed = ini_getl("fans", "top_speed", g_setting_defaults.fans.top_speed, SETTING_INI);
-    g_setting.fans.left_speed = ini_getl("fans", "left_speed", g_setting_defaults.fans.left_speed, SETTING_INI);
-    g_setting.fans.right_speed = ini_getl("fans", "right_speed", g_setting_defaults.fans.right_speed, SETTING_INI);
-
-    // source
-    g_setting.source.analog_format = ini_getl("source", "analog_format", g_setting_defaults.source.analog_format, SETTING_INI);
-    g_setting.source.analog_ratio = ini_getl("source", "analog_ratio", g_setting_defaults.source.analog_ratio, SETTING_INI);
-    g_setting.source.hdzero_band = ini_getl("source", "hdzero_band", g_setting_defaults.source.hdzero_band, SETTING_INI);
-    g_setting.source.hdzero_bw = ini_getl("source", "hdzero_bw", g_setting_defaults.source.hdzero_bw, SETTING_INI);
-    g_setting.source.analog_channel = ini_getl("source", "analog_channel", g_setting_defaults.source.analog_channel, SETTING_INI);
+    // scan / source
     if (g_setting.scan.channel > HDZERO_CHANNEL_NUM) {
         g_setting.scan.channel = 1;
     }
@@ -367,16 +618,7 @@ void settings_load(void) {
         g_setting.scan.channel = 33;
     }
 
-    // autoscan
-    g_setting.autoscan.status = ini_getl("autoscan", "status", g_setting_defaults.autoscan.status, SETTING_INI);
-    g_setting.autoscan.source = ini_getl("autoscan", "source", g_setting_defaults.autoscan.source, SETTING_INI);
-    g_setting.autoscan.last_source = ini_getl("autoscan", "last_source", g_setting_defaults.autoscan.last_source, SETTING_INI);
-
     // osd
-    g_setting.osd.orbit = ini_getl("osd", "orbit", g_setting_defaults.osd.orbit, SETTING_INI);
-    g_setting.osd.embedded_mode = ini_getl("osd", "embedded_mode", g_setting_defaults.osd.embedded_mode, SETTING_INI);
-    g_setting.osd.startup_visibility = ini_getl("osd", "startup_visibility", g_setting_defaults.osd.startup_visibility, SETTING_INI);
-
     switch (g_setting.osd.startup_visibility) {
     default:
     case SETTING_OSD_SHOW_AT_STARTUP_SHOW:
@@ -388,116 +630,16 @@ void settings_load(void) {
         settings_put_bool("osd", "is_visible", g_setting.osd.is_visible);
         break;
     case SETTING_OSD_SHOW_AT_STARTUP_LAST:
-        g_setting.osd.is_visible = settings_get_bool("osd", "is_visible", g_setting_defaults.osd.is_visible);
+        // keep the value read from the file (or the default when absent)
         break;
     }
-
-    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_TOPFAN_SPEED], "topfan_speed", &g_setting_defaults.osd.element[OSD_GOGGLE_TOPFAN_SPEED]);
-    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_LATENCY_LOCK], "latency_lock", &g_setting_defaults.osd.element[OSD_GOGGLE_LATENCY_LOCK]);
-    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_VTX_TEMP], "vtx_temp", &g_setting_defaults.osd.element[OSD_GOGGLE_VTX_TEMP]);
-    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_VRX_TEMP], "vrx_temp", &g_setting_defaults.osd.element[OSD_GOGGLE_VRX_TEMP]);
-    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_BATTERY_LOW], "battery_low", &g_setting_defaults.osd.element[OSD_GOGGLE_BATTERY_LOW]);
-    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_BATTERY_VOLTAGE], "battery_voltage", &g_setting_defaults.osd.element[OSD_GOGGLE_BATTERY_VOLTAGE]);
-    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_CLOCK_DATE], "clock_date", &g_setting_defaults.osd.element[OSD_GOGGLE_CLOCK_DATE]);
-    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_CLOCK_TIME], "clock_time", &g_setting_defaults.osd.element[OSD_GOGGLE_CLOCK_TIME]);
-    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_CHANNEL], "channel", &g_setting_defaults.osd.element[OSD_GOGGLE_CHANNEL]);
-    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_SD_REC], "sd_rec", &g_setting_defaults.osd.element[OSD_GOGGLE_SD_REC]);
-    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_VLQ], "vlq", &g_setting_defaults.osd.element[OSD_GOGGLE_VLQ]);
-    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_ANT0], "ant0", &g_setting_defaults.osd.element[OSD_GOGGLE_ANT0]);
-    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_ANT1], "ant1", &g_setting_defaults.osd.element[OSD_GOGGLE_ANT1]);
-    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_ANT2], "ant2", &g_setting_defaults.osd.element[OSD_GOGGLE_ANT2]);
-    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_ANT3], "ant3", &g_setting_defaults.osd.element[OSD_GOGGLE_ANT3]);
-    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_TEMP_TOP], "goggle_temp_top", &g_setting_defaults.osd.element[OSD_GOGGLE_TEMP_TOP]);
-    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_TEMP_LEFT], "goggle_temp_left", &g_setting_defaults.osd.element[OSD_GOGGLE_TEMP_LEFT]);
-    settings_load_osd_element(&g_setting.osd.element[OSD_GOGGLE_TEMP_RIGHT], "goggle_temp_right", &g_setting_defaults.osd.element[OSD_GOGGLE_TEMP_RIGHT]);
-
-    // power
-    g_setting.power.voltage = ini_getl("power", "voltage_mv", g_setting_defaults.power.voltage, SETTING_INI);
-    g_setting.power.warning_type = ini_getl("power", "warning_type", g_setting_defaults.power.warning_type, SETTING_INI);
-    g_setting.power.cell_count_mode = ini_getl("power", "cell_count_mode", g_setting_defaults.power.cell_count_mode, SETTING_INI);
-    g_setting.power.cell_count = ini_getl("power", "cell_count", g_setting_defaults.power.cell_count, SETTING_INI);
-    g_setting.power.osd_display_mode = ini_getl("power", "osd_display_mode", g_setting_defaults.power.osd_display_mode, SETTING_INI);
-    g_setting.power.power_ana = ini_getl("power", "power_ana_rx", g_setting_defaults.power.power_ana, SETTING_INI);
-    g_setting.power.calibration_offset = ini_getl("power", "calibration_offset_mv", g_setting_defaults.power.calibration_offset, SETTING_INI);
-
-    // record
-    g_setting.record.mode_manual = settings_get_bool("record", "mode_manual", g_setting_defaults.record.mode_manual);
-    g_setting.record.format_ts = settings_get_bool("record", "format_ts", g_setting_defaults.record.format_ts);
-    g_setting.record.bitrate_scale = ini_getl("record", "bitrate_scale", g_setting_defaults.record.bitrate_scale, SETTING_INI);
-    g_setting.record.osd = settings_get_bool("record", "osd", g_setting_defaults.record.osd);
-    g_setting.record.audio = settings_get_bool("record", "audio", g_setting_defaults.record.audio);
-    g_setting.record.audio_source = ini_getl("record", "audio_source", g_setting_defaults.record.audio_source, SETTING_INI);
-    g_setting.record.naming = ini_getl("record", "naming", g_setting_defaults.record.naming, SETTING_INI);
-
-    // image
-    g_setting.image.oled = ini_getl("image", "oled", g_setting_defaults.image.oled, SETTING_INI);
-    g_setting.image.brightness = ini_getl("image", "brightness", g_setting_defaults.image.brightness, SETTING_INI);
-    g_setting.image.saturation = ini_getl("image", "saturation", g_setting_defaults.image.saturation, SETTING_INI);
-    g_setting.image.contrast = ini_getl("image", "contrast", g_setting_defaults.image.contrast, SETTING_INI);
-    g_setting.image.auto_off = ini_getl("image", "auto_off", g_setting_defaults.image.auto_off, SETTING_INI);
-
-    // head tracker
-    g_setting.ht.enable = settings_get_bool("ht", "enable", g_setting_defaults.ht.enable);
-    g_setting.ht.max_angle = ini_getl("ht", "max_angle", g_setting_defaults.ht.max_angle, SETTING_INI);
-    g_setting.ht.acc_x = ini_getl("ht", "acc_x", g_setting_defaults.ht.acc_x, SETTING_INI);
-    g_setting.ht.acc_y = ini_getl("ht", "acc_y", g_setting_defaults.ht.acc_y, SETTING_INI);
-    g_setting.ht.acc_z = ini_getl("ht", "acc_z", g_setting_defaults.ht.acc_z, SETTING_INI);
-    g_setting.ht.gyr_x = ini_getl("ht", "gyr_x", g_setting_defaults.ht.gyr_x, SETTING_INI);
-    g_setting.ht.gyr_y = ini_getl("ht", "gyr_y", g_setting_defaults.ht.gyr_y, SETTING_INI);
-    g_setting.ht.gyr_z = ini_getl("ht", "gyr_z", g_setting_defaults.ht.gyr_z, SETTING_INI);
-    g_setting.ht.alarm_state = ini_getl("ht", "alarm_state", g_setting_defaults.ht.alarm_state, SETTING_INI);
-    g_setting.ht.alarm_angle = ini_getl("ht", "alarm_angle", g_setting_defaults.ht.alarm_angle, SETTING_INI);
-
-    // elrs
-    g_setting.elrs.enable = settings_get_bool("elrs", "enable", g_setting_defaults.elrs.enable);
-
-    // clock
-    g_setting.clock.year = ini_getl("clock", "year", g_setting_defaults.clock.year, SETTING_INI);
-    g_setting.clock.month = ini_getl("clock", "month", g_setting_defaults.clock.month, SETTING_INI);
-    g_setting.clock.day = ini_getl("clock", "day", g_setting_defaults.clock.day, SETTING_INI);
-    g_setting.clock.hour = ini_getl("clock", "hour", g_setting_defaults.clock.hour, SETTING_INI);
-    g_setting.clock.min = ini_getl("clock", "min", g_setting_defaults.clock.min, SETTING_INI);
-    g_setting.clock.sec = ini_getl("clock", "sec", g_setting_defaults.clock.sec, SETTING_INI);
-    g_setting.clock.format = ini_getl("clock", "format", g_setting_defaults.clock.format, SETTING_INI);
-
-    // inputs
-    g_setting.inputs.roller = ini_getl("inputs", "roller", g_setting_defaults.inputs.roller, SETTING_INI);
-    g_setting.inputs.left_click = ini_getl("inputs", "left_click", g_setting_defaults.inputs.left_click, SETTING_INI);
-    g_setting.inputs.left_press = ini_getl("inputs", "left_press", g_setting_defaults.inputs.left_press, SETTING_INI);
-    g_setting.inputs.right_click = ini_getl("inputs", "right_click", g_setting_defaults.inputs.right_click, SETTING_INI);
-    g_setting.inputs.right_press = ini_getl("inputs", "right_press", g_setting_defaults.inputs.right_press, SETTING_INI);
-    g_setting.inputs.right_double_click = ini_getl("inputs", "right_double_click", g_setting_defaults.inputs.right_double_click, SETTING_INI);
-
-    // wifi
-    g_setting.wifi.enable = settings_get_bool("wifi", "enable", g_setting_defaults.wifi.enable);
-    g_setting.wifi.mode = ini_getl("wifi", "mode", g_setting_defaults.wifi.mode, SETTING_INI);
-    ini_gets("wifi", "clientid", g_setting_defaults.wifi.clientid, g_setting.wifi.clientid, WIFI_CLIENTID_MAX, SETTING_INI);
-    ini_gets("wifi", "ap_ssid", g_setting_defaults.wifi.ssid[0], g_setting.wifi.ssid[0], WIFI_SSID_MAX, SETTING_INI);
-    ini_gets("wifi", "ap_passwd", g_setting_defaults.wifi.passwd[0], g_setting.wifi.passwd[0], WIFI_PASSWD_MAX, SETTING_INI);
-    ini_gets("wifi", "sta_ssid", g_setting_defaults.wifi.ssid[1], g_setting.wifi.ssid[1], WIFI_SSID_MAX, SETTING_INI);
-    ini_gets("wifi", "sta_passwd", g_setting_defaults.wifi.passwd[1], g_setting.wifi.passwd[1], WIFI_PASSWD_MAX, SETTING_INI);
-    g_setting.wifi.dhcp = settings_get_bool("wifi", "dhcp", g_setting_defaults.wifi.dhcp);
-    ini_gets("wifi", "ip_addr", g_setting_defaults.wifi.ip_addr, g_setting.wifi.ip_addr, WIFI_NETWORK_MAX, SETTING_INI);
-    ini_gets("wifi", "netmask", g_setting_defaults.wifi.netmask, g_setting.wifi.netmask, WIFI_NETWORK_MAX, SETTING_INI);
-    ini_gets("wifi", "gateway", g_setting_defaults.wifi.gateway, g_setting.wifi.gateway, WIFI_NETWORK_MAX, SETTING_INI);
-    ini_gets("wifi", "dns", g_setting_defaults.wifi.dns, g_setting.wifi.dns, WIFI_NETWORK_MAX, SETTING_INI);
-    g_setting.wifi.rf_channel = ini_getl("wifi", "rf_channel", g_setting_defaults.wifi.rf_channel, SETTING_INI);
-    ini_gets("wifi", "root_pw", g_setting_defaults.wifi.root_pw, g_setting.wifi.root_pw, WIFI_PASSWD_MAX, SETTING_INI);
-    g_setting.wifi.ssh = settings_get_bool("wifi", "ssh", g_setting_defaults.wifi.ssh);
 
     //  no dial under video mode
     g_setting.ease.no_dial = fs_file_exists(NO_DIAL_FILE);
 
-    // storage
-    g_setting.storage.logging = settings_get_bool("storage", "logging", g_setting_defaults.storage.logging);
-
-    // analog rssi
-    g_setting.analog_rssi.calib_min = ini_getl("analog_rssi", "calib_min", g_setting_defaults.analog_rssi.calib_min, SETTING_INI);
-    g_setting.analog_rssi.calib_max = ini_getl("analog_rssi", "calib_max", g_setting_defaults.analog_rssi.calib_max, SETTING_INI);
-
     // language
     if (!language_config()) {
-        g_setting.language.lang = ini_getl("language", "lang", g_setting_defaults.language.lang, SETTING_INI);
+        g_setting.language.lang = ctx.lang;
     }
 
     // Check
