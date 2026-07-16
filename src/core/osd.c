@@ -56,6 +56,14 @@ static osd_resource_t is_fhd;
 static fc_variant_t g_fc_variant_type = FC_VARIANT_UNKNOWN;
 
 static uint16_t osd_buf_shadow[HD_VMAX][HD_HMAX];
+
+// FC OSD glyph sheets are ~4.3MB of BMPs; loading them is deferred to a
+// background thread at boot so they stop gating time-to-first-video.
+// fc_fonts_loaded guards draw_osd_on_screen until the sheets are in memory;
+// fc_osd_font_mutex serializes the boot-time load against runtime reloads
+// (FC variant / camera mode changes coming in over MSP).
+static volatile bool fc_fonts_loaded = false;
+static pthread_mutex_t fc_osd_font_mutex = PTHREAD_MUTEX_INITIALIZER;
 static char clock_date[32] = {"2023/08/10"},
             clock_time[32] = {"12:00:00"},
             clock_format[8] = {"PM"};
@@ -818,6 +826,12 @@ int osd_clear(void) {
 }
 
 static int draw_osd_on_screen(uint8_t row, uint8_t col) {
+    // FC fonts load on a background thread at boot; until they are ready the
+    // image descriptors are zeroed and must not be handed to LVGL. Skipped
+    // cells are force-redrawn when the loader invalidates the shadow buffer.
+    if (!fc_fonts_loaded)
+        return 0;
+
     pthread_mutex_lock(&lvgl_mutex);
     int index = osd_buf_shadow[row][col];
     if (is_fhd)
@@ -940,7 +954,7 @@ static void fc_osd_init(uint8_t fhd, uint16_t OFFSET_X, uint16_t OFFSET_Y) {
     uint8_t osd_width = fhd ? OSD_WIDTH_FHD : OSD_WIDTH_HD;
     uint8_t osd_height = fhd ? OSD_HEIGHT_FHD : OSD_HEIGHT_HD;
 
-    load_fc_osd_font(fhd);
+    // font sheets load asynchronously — see thread_load_fc_osd_fonts()
 
     for (int i = 0; i < HD_VMAX; i++) {
         for (int j = 0; j < HD_HMAX; j++) {
@@ -974,6 +988,30 @@ static void create_osd_scr(void) {
     }
 }
 
+// Boot-time FC font loader. Runs off the critical path: main() reaches first
+// video while the sheets stream in (~0.3-0.7s), then every cell that was
+// skipped by the draw guard is invalidated in the shadow buffer and redrawn.
+static void *thread_load_fc_osd_fonts(void *arg) {
+    (void)arg;
+
+    load_fc_osd_font(0);
+    load_fc_osd_font(1);
+
+    fc_fonts_loaded = true;
+
+    // Invalidate the shadow buffer so thread_osd re-diffs every cell against
+    // the FC/ELRS buffers. 0xFFFF is never a valid glyph index, and the draw
+    // path only indexes with the freshly assigned value, so this is safe.
+    for (int i = 0; i < HD_VMAX; i++) {
+        for (int j = 0; j < HD_HMAX; j++) {
+            osd_buf_shadow[i][j] = 0xFFFF;
+        }
+    }
+    osd_signal_update();
+
+    return NULL;
+}
+
 int osd_init(void) {
     const uint16_t OFFSET_X = 20;
     const uint16_t OFFSET_Y = 40;
@@ -999,6 +1037,16 @@ int osd_init(void) {
     embedded_osd_init(1);
 
     sem_init(&osd_semaphore, 0, 1);
+
+    // Load the ~4.3MB FC OSD font sheets off the boot-critical path. Must be
+    // spawned after sem_init: the loader posts osd_semaphore when done.
+    pthread_t font_tid;
+    if (pthread_create(&font_tid, NULL, thread_load_fc_osd_fonts, NULL) == 0) {
+        pthread_detach(font_tid);
+    } else {
+        // fall back to the old synchronous load rather than boot without fonts
+        thread_load_fc_osd_fonts(NULL);
+    }
 
     return 0;
 }
@@ -1027,12 +1075,17 @@ int load_fc_osd_font_bmp(const char *file, uint8_t fhd) {
     fstat(fd, &stFile);
     size = stFile.st_size;
     buf = (char *)malloc(size);
-    if (!buf)
+    if (!buf) {
+        close(fd);
         return -2;
+    }
 
     rd = read(fd, buf, size);
-    if (rd != size)
+    if (rd != size) {
+        free(buf);
+        close(fd);
         return -3;
+    }
 
     close(fd);
 
@@ -1102,7 +1155,12 @@ int load_fc_osd_font_bmp(const char *file, uint8_t fhd) {
             }
         }
     }
-    // free(buf); //FIX ME, ntant, it seems system becomes unstable if uncomment this ???
+    // Every pixel has been copied into the static osdFont_hd/_fhd arrays and
+    // the lv_img descriptors point at those arrays, not at buf — nothing
+    // retains the file buffer. (An old FIX ME feared instability here; with
+    // loads now serialized by fc_osd_font_mutex there is no concurrent-reload
+    // window either, so the multi-MB per-load leak is fixed for real.)
+    free(buf);
     return 0;
 }
 
@@ -1154,13 +1212,17 @@ void load_fc_osd_font(uint8_t fhd) {
         break;
     }
 
+    // serialize the boot-time background load against runtime reloads
+    // triggered from the MSP thread (FC variant / camera mode changes)
+    pthread_mutex_lock(&fc_osd_font_mutex);
     for (i = 0; i < 3; i++) {
         if (!load_fc_osd_font_bmp(fp[i], fhd)) {
             LOGI(" succecss!");
-            return;
+            break;
         } else
             LOGE(" failed!");
     }
+    pthread_mutex_unlock(&fc_osd_font_mutex);
 }
 
 void osd_shadow_clear(void) {
