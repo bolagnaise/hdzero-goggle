@@ -21,7 +21,6 @@
 #include "ui/ui_image_setting.h"
 #include "ui/ui_main_menu.h"
 #include "ui/ui_porting.h"
-#include "util/mem_reg.h"
 #include "util/system.h"
 
 app_state_t g_app_state = APP_STATE_MAINMENU;
@@ -117,7 +116,7 @@ void app_switch_to_hdmi_in() {
 #endif
 
 #if defined HDZGOGGLE2
-    hw_reg_write(0x0300b084, 0x0001555);
+    system_exec("aww 0x0300b084 0x0001555");
 #endif
 
   rtc6715.init(0, 0);
@@ -171,7 +170,7 @@ void app_switch_to_hdzero(bool is_default) {
 #endif
 
 #if defined HDZGOGGLE2
-    hw_reg_write(0x0300b084, 0x0001555);
+    system_exec("aww 0x0300b084 0x0001555");
 #endif
 
     rtc6715.init(0, 0);

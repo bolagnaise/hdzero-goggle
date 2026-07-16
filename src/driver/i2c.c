@@ -160,51 +160,6 @@ static int iic_write_n(int i2c_fd, uint8_t slave_address, uint8_t reg_address, u
     return ret;
 }
 
-#define IIC_SEQ_MAX 8
-
-static int iic_write_seq(int i2c_fd, uint8_t slave_address, const uint8_t *regs, const uint8_t *vals, uint16_t count) {
-    struct i2c_rdwr_ioctl_data work_queue;
-    struct i2c_msg msgs[IIC_SEQ_MAX];
-    uint8_t bufs[IIC_SEQ_MAX][2];
-
-    if (count == 0 || count > IIC_SEQ_MAX)
-        return -1;
-
-    work_queue.nmsgs = count;
-    work_queue.msgs = msgs;
-
-    for (uint16_t i = 0; i < count; i++) {
-        bufs[i][0] = regs[i];
-        bufs[i][1] = vals[i];
-        msgs[i].len = 2;
-        msgs[i].flags = 0;
-        msgs[i].addr = slave_address;
-        msgs[i].buf = bufs[i];
-    }
-
-    return ioctl(i2c_fd, I2C_RDWR, (unsigned long)&work_queue);
-}
-
-// Write several (reg, val) pairs to one slave as a single I2C_RDWR ioctl.
-// The kernel issues the messages in order back-to-back, so this is
-// equivalent to count sequential i2c_write() calls minus the per-call
-// syscall + mutex round trips (the RF bridge's SPI_Write drops from 7
-// ioctls to 1). Returns <0 if the transfer failed; callers can fall back
-// to individual writes.
-int i2c_write_seq(int port, uint8_t slave_address, const uint8_t *regs, const uint8_t *vals, uint16_t count) {
-    int ret = -1;
-
-    if (!iic_is_port_ready(port)) {
-        return ret;
-    }
-
-    pthread_mutex_lock(&i2c_mutex);
-    ret = iic_write_seq(g_iic_fds[port], slave_address, regs, vals, count);
-    pthread_mutex_unlock(&i2c_mutex);
-
-    return ret;
-}
-
 uint8_t i2c_read(int port, uint8_t slave_address, uint8_t addr) {
     uint8_t val = 0;
 

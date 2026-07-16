@@ -13,7 +13,6 @@
 #include "dm5680.h"
 #include "i2c.h"
 #include "uart.h"
-#include "util/mem_reg.h"
 #include "util/system.h"
 
 #define WAIT(ms) usleep((ms) * 1000)
@@ -59,48 +58,27 @@ void SPI_Write(uint8_t sel, uint8_t page, uint16_t addr, uint32_t dat) {
     uint8_t val;
     uint32_t r1 = 0, r0 = 0;
 
-    // One SPI bridge write = 6 staging-register writes + the 0x90 trigger.
-    // Batch them into a single I2C_RDWR ioctl (the kernel executes the
-    // messages in order, trigger last) instead of 7 syscall+mutex round
-    // trips — RF bring-up issues ~2000 of these back to back at boot.
-    const uint8_t regs[7] = {0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x90};
-    const uint8_t vals[7] = {
-        (uint8_t)(addr & 0xFF),
-        (uint8_t)((page << 4) | (addr >> 8)),
-        (uint8_t)(dat & 0xFF),
-        (uint8_t)((dat >> 8) & 0xFF),
-        (uint8_t)((dat >> 16) & 0xFF),
-        (uint8_t)((dat >> 24) & 0xFF),
-        (uint8_t)((sel == 0) ? 0x03 : sel),
-    };
+    // spi_addr
+    val = addr & 0xFF;
+    I2C_Write(ADDR_FPGA, 0x91, val);
+    val = (page << 4) | (addr >> 8);
+    I2C_Write(ADDR_FPGA, 0x92, val);
 
-    if (i2c_write_seq(2, ADDR_FPGA, regs, vals, 7) < 0) {
-        // Fall back to individual writes. Safe to redo from the top: the
-        // kernel stops at the first failed message, and the trigger is last,
-        // so a partial batch only staged address/data bytes.
+    // spi_wdat
+    val = dat & 0xFF;
+    I2C_Write(ADDR_FPGA, 0x93, val);
+    val = (dat >> 8) & 0xFF;
+    I2C_Write(ADDR_FPGA, 0x94, val);
+    val = (dat >> 16) & 0xFF;
+    I2C_Write(ADDR_FPGA, 0x95, val);
+    val = (dat >> 24) & 0xFF;
+    I2C_Write(ADDR_FPGA, 0x96, val);
 
-        // spi_addr
-        val = addr & 0xFF;
-        I2C_Write(ADDR_FPGA, 0x91, val);
-        val = (page << 4) | (addr >> 8);
-        I2C_Write(ADDR_FPGA, 0x92, val);
-
-        // spi_wdat
-        val = dat & 0xFF;
-        I2C_Write(ADDR_FPGA, 0x93, val);
-        val = (dat >> 8) & 0xFF;
-        I2C_Write(ADDR_FPGA, 0x94, val);
-        val = (dat >> 16) & 0xFF;
-        I2C_Write(ADDR_FPGA, 0x95, val);
-        val = (dat >> 24) & 0xFF;
-        I2C_Write(ADDR_FPGA, 0x96, val);
-
-        // wrte cmd
-        if (sel == 0)
-            I2C_Write(ADDR_FPGA, 0x90, 0x03);
-        else
-            I2C_Write(ADDR_FPGA, 0x90, sel);
-    }
+    // wrte cmd
+    if (sel == 0)
+        I2C_Write(ADDR_FPGA, 0x90, 0x03);
+    else
+        I2C_Write(ADDR_FPGA, 0x90, sel);
 
 #ifdef _DEBUG_DM6300
     SPI_Read(page, addr, &r0, &r1);
@@ -1686,25 +1664,10 @@ void DM6302_DCOC(uint8_t SEL6302) {
     SPI_Write(SEL6302, 0x3, 0x4D4, 0x066727CC); // 0x066427CC
 }
 
-// TWI2 (main I2C bus) clock control register and settings.
-// 0x18 = 500kHz, 0x58 = 200kHz (the DTS default the system runs at).
-#define TWI2_CLK_REG    0x05002814
-#define TWI2_CLK_500KHZ 0x00000018
-#define TWI2_CLK_200KHZ 0x00000058
-
 // DM6302 init
 int DM6302_init(uint8_t freq, uint8_t bw) {
     int to_cnt = 0;
     uint32_t r0 = 1, r1 = 1;
-
-    // Boost the bus to 500kHz for the ~2000 SPI-bridge writes of RF
-    // bring-up. Note: an earlier 1MHz boost was reverted upstream for
-    // reliability (PR #609 "slower rf chip config speed"); 500kHz is the
-    // more conservative value BoxPro shipped with. The 0xFF0 probe below
-    // already gates on chip comms — if probing keeps failing at 500kHz we
-    // drop back to 200kHz for the remaining attempts, and unlike the old
-    // boost code the default speed is restored on EVERY exit path.
-    bool i2c_boosted = (hw_reg_write(TWI2_CLK_REG, TWI2_CLK_500KHZ) == 0);
 
     while (r0) {
         DM5680_ResetRF(0);
@@ -1722,14 +1685,8 @@ int DM6302_init(uint8_t freq, uint8_t bw) {
             r0 = 0;
 
         to_cnt++;
-        if (i2c_boosted && r0 && to_cnt >= 3) {
-            LOGE("DM6302 probe failing at 500kHz I2C, falling back to 200kHz");
-            hw_reg_write(TWI2_CLK_REG, TWI2_CLK_200KHZ);
-            i2c_boosted = false;
-        }
         if (to_cnt >= 10) {
             LOGE("Error: DM6302s have no response.");
-            hw_reg_write(TWI2_CLK_REG, TWI2_CLK_200KHZ);
             return 1;
         }
     }
@@ -1796,9 +1753,6 @@ int DM6302_init(uint8_t freq, uint8_t bw) {
 
     DM6302_M0();
     LOGI("M0 done");
-
-    // restore the system default bus speed (runtime traffic shares TWI2)
-    hw_reg_write(TWI2_CLK_REG, TWI2_CLK_200KHZ);
 
     return 0;
 }

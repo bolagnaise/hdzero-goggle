@@ -13,9 +13,6 @@ int i2c_write(int port, uint8_t slave_address, uint8_t addr, uint8_t val);
 int8_t i2c_read_n(int port, uint8_t slave_address, uint8_t addr, uint8_t *data, uint16_t len);
 int8_t i2c_write_n(int port, uint8_t slave_address, uint8_t addr, uint8_t *val, uint16_t len);
 
-// batch of independent (reg, val) writes in one I2C_RDWR ioctl; <0 on failure
-int i2c_write_seq(int port, uint8_t slave_address, const uint8_t *regs, const uint8_t *vals, uint16_t count);
-
 #define BMI_I2C_WRITE(addr, val, len) i2c_write_n(1, 0x68, addr, val, len)
 #define BMI_I2C_READ(addr, val, len)  i2c_read_n(1, 0x68, addr, val, len)
 
