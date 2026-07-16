@@ -352,6 +352,16 @@ static void page_power_on_click(uint8_t key, int sel) {
     }
 }
 
+// Refresh the cell-count widgets (and persist the value) once a deferred
+// AUTO detection completes — at boot the hwmon sensors can come up after
+// this page was created. Runs under lvgl_mutex via main_menu_update().
+static void page_power_on_update(uint32_t delta_ms) {
+    (void)delta_ms;
+    if (battery_take_cell_count_refresh()) {
+        page_power_update_cell_count();
+    }
+}
+
 page_pack_t pp_power = {
     .p_arr = {
         .cur = 0,
@@ -362,7 +372,7 @@ page_pack_t pp_power = {
     .enter = NULL,
     .exit = page_power_exit,
     .on_created = NULL,
-    .on_update = NULL,
+    .on_update = page_power_on_update,
     .on_roller = page_power_on_roller,
     .on_click = page_power_on_click,
     .on_right_button = NULL,

@@ -2,6 +2,7 @@
 
 logpath_src=/mnt/app/log
 logpath_dst=/mnt/extsd/log
+staging=${logpath_src}/.staging
 
 function log_backup()
 {
@@ -20,18 +21,18 @@ function log_backup()
         do
                 if [ -f "$file" ]
                 then
-                        #let start=${#dst}+16
-                        #index_s=${file: $start}
-                        #let index_i=${index_s}
-                        let index_i=${file##*.}
+                        #only pure-decimal suffixes are backup indices; a
+                        #non-numeric suffix would abort ash arithmetic (.2x)
+                        #or evaluate as 0/subtraction and corrupt the index
+                        sfx=${file##*.}
+                        case "${sfx}" in
+                                ''|*[!0-9]*) continue ;;
+                        esac
 
-                        if [ "${index_i}" -gt "${index}" ]
+                        if [ "${sfx}" -gt "${index}" ]
                         then
-                                index=${index_i}
+                                index=${sfx}
                         fi
-
-                        #echo "$file"
-                        #echo "index = ${index_s} ${index_i} ${index}"
                 fi
         done
 
@@ -45,7 +46,7 @@ function log_backup()
                         name=${file##*/}
                         cp ${file} ${dst}/${name}.${index}
                         echo "cp ${file} ${dst}/${name}.${index}"
-						#rm -f ${file}
+                        rm -f ${file}
                         let index+=1
                 fi
         done
@@ -59,8 +60,13 @@ function log_backup()
                 do
                         if [ -f "$file" ]
                         then
-                                let index_i=${file##*.}
-                                if [ "${index_i}" -lt "${prune_below}" ]
+                                #same numeric guard: never delete user files
+                                #that merely match *.log.* (e.g. app.log.bak)
+                                sfx=${file##*.}
+                                case "${sfx}" in
+                                        ''|*[!0-9]*) continue ;;
+                                esac
+                                if [ "${sfx}" -lt "${prune_below}" ]
                                 then
                                         rm -f "$file"
                                 fi
@@ -69,17 +75,20 @@ function log_backup()
         fi
 }
 
-#if grep -qs '/mnt/extsd' /proc/mounts; then 
+#snapshot the previous boot's logs first: mv within the same filesystem is
+#atomic and instant, so the slow SD-card copy below can never race the
+#just-started record/app processes writing fresh logs into /mnt/app/log.
+#Staged files accumulate (and survive) across boots without an SD card.
+mkdir -p ${staging}
+mv ${logpath_src}/*.log ${staging}/ 2> /dev/null
+
+#if grep -qs '/mnt/extsd' /proc/mounts; then
 if df | grep -qs '/mnt/extsd'; then
-    echo "sdcard mounted."         
-else                    
+    echo "sdcard mounted."
+else
     echo "sdcard not mounted."
     exit
-fi  
+fi
 
-#copy /mnt/app/log/* to /mnt/extsd/log if sdcard mounted
-log_backup $logpath_src $logpath_dst
-
-#remove all log files
-rm -f ${logpath_src}/*
-
+#copy staged logs to /mnt/extsd/log (log_backup removes each after copy)
+log_backup ${staging} ${logpath_dst}

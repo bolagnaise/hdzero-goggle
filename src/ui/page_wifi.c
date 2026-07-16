@@ -340,8 +340,11 @@ static void page_wifi_update_settings() {
 
         if (g_setting.wifi.ssh) {
             // -R generates missing host keys on first connection; the
-            // install script no longer pre-generates them at boot
-            system_exec("dropbear -R");
+            // install script no longer pre-generates them at boot. Fall
+            // back to invoking dropbearmulti directly in case the /bin
+            // symlinks haven't been installed yet (first boot after a
+            // flash) — dropbearmulti dispatches on argv when named.
+            system_exec("mkdir -p /etc/dropbear; dropbear -R 2> /dev/null || /mnt/app/services/dropbear/dropbearmulti dropbear -R");
         }
     }
 }

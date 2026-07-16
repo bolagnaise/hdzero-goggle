@@ -20,6 +20,8 @@ extern sys_battery_t g_battery;
 
 void battery_init();
 void battery_update();
+// true exactly once after a deferred AUTO cell-count detect completes
+bool battery_take_cell_count_refresh(void);
 
 bool battery_is_low();
 int battery_get_millivolts(bool per_cell);

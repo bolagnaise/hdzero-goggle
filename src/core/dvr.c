@@ -33,6 +33,11 @@ static pthread_mutex_t dvr_mutex;
 #define DVR_RACE_LABEL_TTL_S (5 * 60)
 static char dvr_race_label[REC_labelMAXLEN] = "";
 static time_t dvr_race_label_time = 0;
+// Protects dvr_race_label/_time: the setter runs on the ESP32 UART reader
+// thread while dvr_update_record_conf reads them under dvr_mutex. A
+// dedicated mutex (not dvr_mutex) so a label push never blocks behind
+// dvr_cmd's multi-second record start/stop sequences.
+static pthread_mutex_t dvr_race_label_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Store a filename-safe copy of the label: alnum kept, spaces become '-',
 // everything else dropped, capped to REC_labelMAXLEN. Empty input clears it.
@@ -49,9 +54,11 @@ void dvr_set_race_label(const uint8_t *label, uint16_t len) {
     }
     clean[n] = 0;
 
+    pthread_mutex_lock(&dvr_race_label_mutex);
     strcpy(dvr_race_label, clean);
     dvr_race_label_time = time(NULL);
-    LOGI("dvr race label set to \"%s\"", dvr_race_label);
+    pthread_mutex_unlock(&dvr_race_label_mutex);
+    LOGI("dvr race label set to \"%s\"", clean);
 }
 
 // Set/clear the boot-time fsck trigger (see DVR_DIRTY_MARKER in dvr.h). The
@@ -359,11 +366,16 @@ static void dvr_update_record_conf() {
     ini_putl("record", "naming", g_setting.record.naming, REC_CONF);
 
     // Pass the race label to the record process; always written so a stale
-    // label never survives in the conf, and expired labels are dropped
+    // label never survives in the conf, and expired labels are dropped.
+    // Copy under the label mutex, write the ini from the local copy.
+    char label[REC_labelMAXLEN];
+    pthread_mutex_lock(&dvr_race_label_mutex);
     if (dvr_race_label[0] && time(NULL) - dvr_race_label_time > DVR_RACE_LABEL_TTL_S) {
         dvr_race_label[0] = 0;
     }
-    ini_puts("record", "label", dvr_race_label, REC_CONF);
+    strcpy(label, dvr_race_label);
+    pthread_mutex_unlock(&dvr_race_label_mutex);
+    ini_puts("record", "label", label, REC_CONF);
 
     sync();
 }
@@ -411,8 +423,26 @@ void dvr_cmd(osd_dvr_cmd_t cmd) {
         if (dvr_is_recording) {
             dvr_is_recording = false;
             system_script(REC_STOP);
-            sleep(2); // wait for record process
-            dvr_set_dirty_marker(false);
+            // REC_STOP only enqueues a message; the recorder still has to
+            // finalize the MP4 on the card. Poll its status file instead of
+            // trusting a fixed wait, and clear the boot-fsck marker only on
+            // a confirmed clean stop (0=idle, 2=stopped).
+            int ret = -1;
+            for (int i = 0; i < 40; i++) {
+                usleep(100 * 1000);
+                FILE *fp = fopen("/tmp/record.dat", "r");
+                if (fp) {
+                    if (fscanf(fp, "%d", &ret) != 1)
+                        ret = -1;
+                    fclose(fp);
+                }
+                if (ret == 0 || ret == 2)
+                    break;
+            }
+            if (ret == 0 || ret == 2) {
+                sync();
+                dvr_set_dirty_marker(false);
+            }
         }
     }
 

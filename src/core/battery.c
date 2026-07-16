@@ -11,6 +11,10 @@ sys_battery_t g_battery;
 // reading) and should be retried from battery_update()
 static bool cell_count_pending = false;
 
+// set when the deferred detection completes so the Power page can refresh
+// and persist the late value (consumed via battery_take_cell_count_refresh)
+static bool cell_count_refreshed = false;
+
 static int battery_detect_type() {
     int v = read_voltage();
     if (v <= 0)
@@ -21,20 +25,27 @@ static int battery_detect_type() {
 void battery_init() {
     switch (g_setting.power.cell_count_mode) {
     default:
-    case SETTING_POWER_CELL_COUNT_MODE_AUTO:
-        g_battery.type = battery_detect_type();
-        cell_count_pending = (g_battery.type == 0);
+    case SETTING_POWER_CELL_COUNT_MODE_AUTO: {
+        // Compute into a local and publish g_battery.type exactly once:
+        // the deferred retry runs on the peripheral thread while the UI
+        // reads g_battery.type continuously, so it must never observe the
+        // transient 0 from a failed detect.
+        int detected = battery_detect_type();
+        cell_count_pending = (detected == 0);
+        int type = detected;
         if (cell_count_pending) {
             // The hwmon insmods are backgrounded at boot (rc.sh), so on
             // Goggle v1 the mcp3021 iio node may not exist yet. Keep the
             // last stored cell count instead of persisting a bogus 2S;
             // battery_update() completes detection once readings are valid.
-            g_battery.type = g_setting.power.cell_count;
+            type = g_setting.power.cell_count;
         }
-        if (g_battery.type < CELL_MIN_COUNT)
-            g_battery.type = CELL_MIN_COUNT;
-        g_setting.power.cell_count = g_battery.type;
+        if (type < CELL_MIN_COUNT)
+            type = CELL_MIN_COUNT;
+        g_battery.type = type;
+        g_setting.power.cell_count = type;
         break;
+    }
     case SETTING_POWER_CELL_COUNT_MODE_MANUAL:
         g_battery.type = g_setting.power.cell_count;
         cell_count_pending = false;
@@ -47,7 +58,15 @@ void battery_update() {
     if (cell_count_pending && g_battery.voltage > 0 &&
         g_setting.power.cell_count_mode == SETTING_POWER_CELL_COUNT_MODE_AUTO) {
         battery_init(); // voltage now valid — complete the deferred auto-detect
+        if (!cell_count_pending)
+            cell_count_refreshed = true;
     }
+}
+
+bool battery_take_cell_count_refresh(void) {
+    bool refreshed = cell_count_refreshed;
+    cell_count_refreshed = false;
+    return refreshed;
 }
 
 bool battery_is_low() {

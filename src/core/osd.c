@@ -63,6 +63,9 @@ static uint16_t osd_buf_shadow[HD_VMAX][HD_HMAX];
 // fc_osd_font_mutex serializes the boot-time load against runtime reloads
 // (FC variant / camera mode changes coming in over MSP).
 static volatile bool fc_fonts_loaded = false;
+// set by the loader thread when fonts finish; consumed by thread_osd, which
+// performs the shadow-buffer invalidation itself so it stays the sole writer
+static volatile bool fc_fonts_invalidate_pending = false;
 static pthread_mutex_t fc_osd_font_mutex = PTHREAD_MUTEX_INITIALIZER;
 static char clock_date[32] = {"2023/08/10"},
             clock_time[32] = {"12:00:00"},
@@ -825,19 +828,25 @@ int osd_clear(void) {
     return 0;
 }
 
-static int draw_osd_on_screen(uint8_t row, uint8_t col) {
+// ch is passed by value rather than re-read from osd_buf_shadow inside the
+// lock: the font-loader completion path invalidates the shadow buffer to
+// 0xFFFF concurrently, and a re-read here could otherwise index the font
+// array out of bounds and hand LVGL a wild descriptor pointer.
+static int draw_osd_on_screen(uint8_t row, uint8_t col, uint16_t ch) {
     // FC fonts load on a background thread at boot; until they are ready the
     // image descriptors are zeroed and must not be handed to LVGL. Skipped
     // cells are force-redrawn when the loader invalidates the shadow buffer.
     if (!fc_fonts_loaded)
         return 0;
 
+    if (ch >= OSD_VNUM * OSD_HNUM)
+        return 0;
+
     pthread_mutex_lock(&lvgl_mutex);
-    int index = osd_buf_shadow[row][col];
     if (is_fhd)
-        lv_img_set_src(img_arr[is_fhd][row][col], &osd_font_fhd.data[index]);
+        lv_img_set_src(img_arr[is_fhd][row][col], &osd_font_fhd.data[ch]);
     else
-        lv_img_set_src(img_arr[is_fhd][row][col], &osd_font_hd.data[index]);
+        lv_img_set_src(img_arr[is_fhd][row][col], &osd_font_hd.data[ch]);
     pthread_mutex_unlock(&lvgl_mutex);
 
     return 0;
@@ -999,14 +1008,10 @@ static void *thread_load_fc_osd_fonts(void *arg) {
 
     fc_fonts_loaded = true;
 
-    // Invalidate the shadow buffer so thread_osd re-diffs every cell against
-    // the FC/ELRS buffers. 0xFFFF is never a valid glyph index, and the draw
-    // path only indexes with the freshly assigned value, so this is safe.
-    for (int i = 0; i < HD_VMAX; i++) {
-        for (int j = 0; j < HD_HMAX; j++) {
-            osd_buf_shadow[i][j] = 0xFFFF;
-        }
-    }
+    // Hand the shadow-buffer invalidation to thread_osd (its sole writer)
+    // rather than touching osd_buf_shadow from this thread; the sem_post in
+    // osd_signal_update() orders the flag for the consumer.
+    fc_fonts_invalidate_pending = true;
     osd_signal_update();
 
     return NULL;
@@ -1230,7 +1235,7 @@ void osd_shadow_clear(void) {
         for (int j = 0; j < HD_HMAX; j++) {
             if (osd_buf_shadow[i][j] != 0x20) {
                 osd_buf_shadow[i][j] = 0x20;
-                draw_osd_on_screen(i, j);
+                draw_osd_on_screen(i, j, 0x20);
             }
         }
     }
@@ -1249,6 +1254,18 @@ void *thread_osd(void *ptr) {
         // wait for signal to render
         sem_wait(&osd_semaphore);
 
+        // fonts just finished loading in the background: invalidate the
+        // shadow buffer HERE so this thread stays its only writer, forcing
+        // a full re-diff of every cell that was skipped by the draw guard
+        if (fc_fonts_invalidate_pending) {
+            fc_fonts_invalidate_pending = false;
+            for (int i = 0; i < HD_VMAX; i++) {
+                for (int j = 0; j < HD_HMAX; j++) {
+                    osd_buf_shadow[i][j] = 0xFFFF; // never a valid glyph
+                }
+            }
+        }
+
         // clear shadow buffer when mode changes
         if (fhd_d != is_fhd) {
             osd_shadow_clear();
@@ -1263,7 +1280,7 @@ void *thread_osd(void *ptr) {
                     ch = elrs_osd[i][j];
                 if (ch != osd_buf_shadow[i][j]) {
                     osd_buf_shadow[i][j] = ch;
-                    draw_osd_on_screen(i, j);
+                    draw_osd_on_screen(i, j, ch);
                 }
             }
         }

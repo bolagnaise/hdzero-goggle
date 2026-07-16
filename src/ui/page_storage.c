@@ -52,7 +52,8 @@ typedef enum {
     RPC_ERR_FAILED_TO_REMOUNT_CARD,
     RPC_ERR_RESULTS_FILE_MISSING,
     RPC_ERR_PROCESS_DID_NOT_START,
-    RPC_ERR_CARD_BUSY, // chkfixsd.sh could not umount; check did not run
+    RPC_ERR_CARD_BUSY,     // chkfixsd.sh could not umount; check did not run
+    RPC_ERR_CHECK_FAILED,  // fsck itself errored or could not be executed
 } repair_codes_t;
 
 typedef struct {
@@ -291,12 +292,16 @@ static repair_codes_t page_storage_repair_sd() {
                             status = RPC_SUCCESS_CARD_FIXED;
                         } else if (exit_code == 0) {
                             status = RPC_SUCCESS_NO_CHANGES;
-                        } else {
+                        } else if (exit_code == 9) {
                             // chkfixsd.sh writes 9 when it could not umount
-                            // the card: fsck never ran, so this must NOT be
-                            // reported as success (the auto-repair path only
-                            // clears the DVR dirty marker on success codes)
+                            // the card: fsck never ran
                             status = RPC_ERR_CARD_BUSY;
+                        } else {
+                            // raw fsck.fat failure codes pass through here,
+                            // including 127 when /bin/fsck.fat is missing.
+                            // None of these are success: the auto-repair
+                            // path must keep the DVR dirty marker.
+                            status = RPC_ERR_CHECK_FAILED;
                         }
                         system_exec(shell_move_files);
                     }
@@ -385,6 +390,9 @@ static void page_storage_repair_sd_timer_cb(struct _lv_timer_t *timer) {
         break;
     case RPC_ERR_CARD_BUSY:
         snprintf(buf, sizeof(buf), "%s.\n%s.", _lang("SD Card is busy, try again"), _lang("Press click to exit."));
+        break;
+    case RPC_ERR_CHECK_FAILED:
+        snprintf(buf, sizeof(buf), "%s.\n%s.", _lang("Filesystem check failed"), _lang("Press click to exit."));
         break;
     default:
         snprintf(buf, sizeof(buf), "%s.\n%s.", _lang("Unsupported status code"), _lang("Press click to exit."));
@@ -570,8 +578,13 @@ static void page_storage_on_right_button(bool is_short) {
 }
 
 static void page_storage_post_bootup_action(void (*complete_callback)()) {
-    page_storage_init_auto_sd_repair();
+    // Assign the completion callback BEFORE the repair init: the marker-skip
+    // path publishes was_sd_repair_invoked immediately, and detect_sdcard()
+    // (peripheral thread) may fire the callback as soon as that flag is
+    // visible — assigning afterwards could drop the bootup completion and
+    // stall the post-bootup queue (WiFi etc).
     sdcard_ready_cb = complete_callback;
+    page_storage_init_auto_sd_repair();
 }
 
 /**
@@ -655,17 +668,23 @@ void page_storage_init_auto_sd_repair() {
         // Mark invoked when using dev script.
         page_storage.was_sd_repair_invoked = true;
     } else if (!page_storage.is_auto_sd_repair_active) {
-        // Only run the boot-time integrity check when the DVR dirty marker
-        // says the card was being written at power-off (or a previous check
-        // never finished). fsck.fat -y is a full-card scan - up to a minute
-        // on large cards - and the whole post-bootup queue (DVR readiness,
-        // WiFi) is serialized behind it. A cleanly-closed card skips it;
-        // manual "Repair SD Card" from this menu is unaffected.
-        if (!fs_file_exists(DVR_DIRTY_MARKER)) {
-            // still unblocks detect_sdcard(), which requires a repair to
-            // have been "invoked" before it processes the card at all
-            page_storage.was_sd_repair_invoked = true;
-            return;
+        // Only gate the BOOT-time integrity check on the DVR dirty marker:
+        // fsck.fat -y is a full-card scan - up to a minute on large cards -
+        // and the whole post-bootup queue (DVR readiness, WiFi) is
+        // serialized behind it, so a cleanly-closed card skips it at boot.
+        // Runtime card INSERTIONS (thread.c re-arms sdcard_ready_cb to this
+        // function) are checked unconditionally as before: the marker only
+        // reflects this goggle's own recordings, not a card dirtied
+        // elsewhere. Manual "Repair SD Card" from this menu is unaffected.
+        static bool boot_check_evaluated = false;
+        if (!boot_check_evaluated) {
+            boot_check_evaluated = true;
+            if (!fs_file_exists(DVR_DIRTY_MARKER)) {
+                // still unblocks detect_sdcard(), which requires a repair to
+                // have been "invoked" before it processes the card at all
+                page_storage.was_sd_repair_invoked = true;
+                return;
+            }
         }
         pthread_t tid;
         if (!pthread_create(&tid, NULL, page_storage_repair_thread, NULL)) {

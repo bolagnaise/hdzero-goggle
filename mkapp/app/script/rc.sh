@@ -110,8 +110,13 @@ else
 	/mnt/app/app/record/record &
 fi
 
-#log backup is not consumed by anything at boot — run it in the background
-/mnt/app/script/sdstat_log_backup.sh &
+#log backup is not consumed by anything at boot — run it in the background.
+#Skip it when a dirty marker means the app will fsck the card right away
+#(the backup's SD writes would hold the mount and defeat the umount); the
+#staged logs are simply copied on the next boot instead.
+if [ ! -e /mnt/app/dvr_dirty ]; then
+	/mnt/app/script/sdstat_log_backup.sh &
+fi
 
 	#system led
 if [ $PLATFORM == "HDZGOGGLE" ]; then
