@@ -36,9 +36,10 @@ if [ "$UMOUNTED" = "1" ]; then
 else
     #never fsck a mounted filesystem - the old script did exactly that
     #whenever its fixed sleep wasn't long enough for umount to succeed,
-    #risking corruption of a card that was fine
+    #risking corruption of a card that was fine. 9 = "check did not run"
+    #(page_storage maps it to an error so the dirty marker is kept)
     echo "SD card busy, skipping check" > /tmp/fsck.log
-    RESULT=0
+    RESULT=9
 fi
 echo "fsck result: $RESULT" >> /tmp/fsck.log
 echo $RESULT > /tmp/fsck.result

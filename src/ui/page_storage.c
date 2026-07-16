@@ -52,6 +52,7 @@ typedef enum {
     RPC_ERR_FAILED_TO_REMOUNT_CARD,
     RPC_ERR_RESULTS_FILE_MISSING,
     RPC_ERR_PROCESS_DID_NOT_START,
+    RPC_ERR_CARD_BUSY, // chkfixsd.sh could not umount; check did not run
 } repair_codes_t;
 
 typedef struct {
@@ -288,8 +289,14 @@ static repair_codes_t page_storage_repair_sd() {
                     } else {
                         if (exit_code == 1) {
                             status = RPC_SUCCESS_CARD_FIXED;
-                        } else {
+                        } else if (exit_code == 0) {
                             status = RPC_SUCCESS_NO_CHANGES;
+                        } else {
+                            // chkfixsd.sh writes 9 when it could not umount
+                            // the card: fsck never ran, so this must NOT be
+                            // reported as success (the auto-repair path only
+                            // clears the DVR dirty marker on success codes)
+                            status = RPC_ERR_CARD_BUSY;
                         }
                         system_exec(shell_move_files);
                     }
@@ -375,6 +382,9 @@ static void page_storage_repair_sd_timer_cb(struct _lv_timer_t *timer) {
         break;
     case RPC_ERR_PROCESS_DID_NOT_START:
         snprintf(buf, sizeof(buf), "%s.\n%s.", _lang("Failed to start repair"), _lang("Press click to exit."));
+        break;
+    case RPC_ERR_CARD_BUSY:
+        snprintf(buf, sizeof(buf), "%s.\n%s.", _lang("SD Card is busy, try again"), _lang("Press click to exit."));
         break;
     default:
         snprintf(buf, sizeof(buf), "%s.\n%s.", _lang("Unsupported status code"), _lang("Press click to exit."));
