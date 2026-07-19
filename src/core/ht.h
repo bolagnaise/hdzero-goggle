@@ -10,7 +10,10 @@ extern "C" {
 #define CALIBRATION_BCNT   8 // calibartion loop cnt = (1<<CALIBRATION_BCNT)
 #define gyroWeightTiltRoll 0.98
 
-#define MOTION_GYRO_THR    3000
+// Raw-count motion threshold for OLED auto-off. The 1000dps gyro range
+// doubles raw counts vs the old 2000dps range, quadrupling this squared
+// metric, so 3000 -> 12000 keeps the motion sensitivity unchanged.
+#define MOTION_GYRO_THR    12000
 #define MOTION_DUR_1MINUTE 60
 
 #include "bmi270/bmi2_defs.h"

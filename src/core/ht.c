@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <math.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
@@ -263,12 +264,50 @@ void ht_set_alarm_angle() {
     ini_putl("ht", "alarm_angle", g_setting.ht.alarm_angle, SETTING_INI);
 }
 
+// Dynamic gyro bias, tracked while the head is held still to cancel the slow
+// drift the fixed calibration offset leaves behind (the main cause of pan
+// drift). Estimated as a slow leaky integral of the residual rate.
+static float gyr_bias_dyn[3] = {0.0f, 0.0f, 0.0f};
+static int gyr_still_cnt = 0;
+
+#define GYR_STILL_DPS_THR 1.5f    // per-axis "held still" rate threshold
+#define GYR_STILL_SAMPLES 50      // consecutive still samples before adapting
+#define GYR_BIAS_ALPHA    0.0005f // leaky-integrator rate (~20s time constant)
+
+void ht_reset_gyr_bias(void) {
+    gyr_bias_dyn[0] = gyr_bias_dyn[1] = gyr_bias_dyn[2] = 0.0f;
+    gyr_still_cnt = 0;
+}
+
 static void calc_gyr(float *gyrAngle) // in degree
 {
-    // convert gyro readings to degrees/sec (with calibration offsets)
-    gyrAngle[0] = gyr_to_dps(ht_data.sensor_data.gyr.x - ht_data.gyr_offset[0]);
-    gyrAngle[1] = gyr_to_dps(ht_data.sensor_data.gyr.y - ht_data.gyr_offset[1]);
-    gyrAngle[2] = gyr_to_dps(ht_data.sensor_data.gyr.z - ht_data.gyr_offset[2]);
+    // Residual raw counts after the static calibration offset and the
+    // dynamic bias estimate, then convert to degrees/sec.
+    float residual[3];
+    residual[0] = (float)ht_data.sensor_data.gyr.x - (float)ht_data.gyr_offset[0] - gyr_bias_dyn[0];
+    residual[1] = (float)ht_data.sensor_data.gyr.y - (float)ht_data.gyr_offset[1] - gyr_bias_dyn[1];
+    residual[2] = (float)ht_data.sensor_data.gyr.z - (float)ht_data.gyr_offset[2] - gyr_bias_dyn[2];
+
+    gyrAngle[0] = gyr_to_dps_f(residual[0]);
+    gyrAngle[1] = gyr_to_dps_f(residual[1]);
+    gyrAngle[2] = gyr_to_dps_f(residual[2]);
+
+    // When all axes are near zero for long enough, the head is stationary and
+    // any residual rate is bias: fold it slowly into the bias estimate.
+    if (fabsf(gyrAngle[0]) < GYR_STILL_DPS_THR &&
+        fabsf(gyrAngle[1]) < GYR_STILL_DPS_THR &&
+        fabsf(gyrAngle[2]) < GYR_STILL_DPS_THR) {
+        if (gyr_still_cnt <= GYR_STILL_SAMPLES)
+            gyr_still_cnt++;
+    } else {
+        gyr_still_cnt = 0;
+    }
+    if (gyr_still_cnt > GYR_STILL_SAMPLES - 1) {
+        gyr_bias_dyn[0] += residual[0] * GYR_BIAS_ALPHA;
+        gyr_bias_dyn[1] += residual[1] * GYR_BIAS_ALPHA;
+        gyr_bias_dyn[2] += residual[2] * GYR_BIAS_ALPHA;
+    }
+
     rotate(gyrAngle, imu_orientation);
 }
 
@@ -283,6 +322,7 @@ static void calc_acc(float *accAngle) // in G
 
 void ht_calibrate() {
     LOGI("HT calibration...");
+    ht_reset_gyr_bias(); // start the dynamic bias fresh from the new offsets
     ht_data.acc_offset[0] = ht_data.acc_offset[1] = ht_data.acc_offset[2] = 0;
     ht_data.gyr_offset[0] = ht_data.gyr_offset[1] = ht_data.gyr_offset[2] = 0;
 

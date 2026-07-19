@@ -114,7 +114,15 @@ float acc_to_g(int16_t val)
 
 float gyr_to_dps(int16_t gyr)
 {
-    return lsb_to_dps(gyr, 2000, bmi2_dev.resolution);
+    return lsb_to_dps(gyr, 1000, bmi2_dev.resolution);
+}
+
+// Same conversion for an already offset-corrected float count (bias tracking
+// needs to convert fractional residuals, not raw int16 samples).
+float gyr_to_dps_f(float gyr)
+{
+    float half_scale = (float)((1 << bmi2_dev.resolution) / 2);
+    return gyr * 1000.0f / half_scale;
 }
 
 void get_bmi270(struct bmi2_sens_data* sensor_data)
@@ -151,10 +159,10 @@ void get_bmi270(struct bmi2_sens_data* sensor_data)
 	        //LOGI("Gyr_Y = %d\t", sensor_data->gyr.y);
 	        //LOGI("Gyr_Z= %d", sensor_data->gyr.z);
 	
-	        /* Converting lsb to degree per second for 16 bit gyro at 2000dps range. */
-	        x[1] = lsb_to_dps(sensor_data->gyr.x, 2000, bmi2_dev.resolution);
-	        y[1] = lsb_to_dps(sensor_data->gyr.y, 2000, bmi2_dev.resolution);
-	        z[1] = lsb_to_dps(sensor_data->gyr.z, 2000, bmi2_dev.resolution);
+	        /* Converting lsb to degree per second for 16 bit gyro at 1000dps range. */
+	        x[1] = lsb_to_dps(sensor_data->gyr.x, 1000, bmi2_dev.resolution);
+	        y[1] = lsb_to_dps(sensor_data->gyr.y, 1000, bmi2_dev.resolution);
+	        z[1] = lsb_to_dps(sensor_data->gyr.z, 1000, bmi2_dev.resolution);
 	
 	        /* Print the data in dps. */
             //LOGI("Acc:%4.2f, %4.2f, %4.2f, Gyr: %4.2f, %4.2f, %4.2f ", x[0], y[0], z[0],x[1], y[1], z[1]); 
@@ -220,8 +228,10 @@ static int8_t set_accel_gyro_config(struct bmi2_dev *bmi2_dev)
         /* Set Output Data Rate */
         config[GYRO].cfg.gyr.odr = BMI2_GYR_ODR_200HZ;
 
-        /* Gyroscope Angular Rate Measurement Range.By default the range is 2000dps. */
-        config[GYRO].cfg.gyr.range = BMI2_GYR_RANGE_2000;
+        /* Gyroscope Angular Rate Measurement Range. 1000dps halves the LSB
+         * step vs the default 2000dps, so small head movements quantize
+         * finer (gyr_to_dps uses the matching 1000 numerator). */
+        config[GYRO].cfg.gyr.range = BMI2_GYR_RANGE_1000;
 
         /* Gyroscope bandwidth parameters. By default the gyro bandwidth is in normal mode. */
         config[GYRO].cfg.gyr.bwp = BMI2_GYR_NORMAL_MODE;
@@ -231,7 +241,7 @@ static int8_t set_accel_gyro_config(struct bmi2_dev *bmi2_dev)
          *  0 -> Ultra low power mode(Default)
          *  1 -> High performance mode
          */
-        config[GYRO].cfg.gyr.noise_perf = BMI2_POWER_OPT_MODE;
+        config[GYRO].cfg.gyr.noise_perf = BMI2_PERF_OPT_MODE;
 
         /* Enable/Disable the filter performance mode where averaging of samples
          * will be done based on above set bandwidth and ODR.
