@@ -31,6 +31,7 @@
 #include "driver/nct75.h"
 #include "driver/rtc.h"
 #include "driver/rtc6715.h"
+#include "util/time.h"
 #include "ui/page_common.h"
 #include "ui/page_fans.h"
 #include "ui/page_scannow.h"
@@ -191,6 +192,11 @@ void osd_rec_show(bool bShow) {
 #endif
 }
 
+// 2Hz flash phase shared by the gradual-alarm renderers.
+static bool osd_warn_flash_on(void) {
+    return (time_ms() / 500) & 1;
+}
+
 void osd_battery_low_show() {
     char buf[128];
     if (g_setting.power.warning_type == SETTING_POWER_WARNING_TYPE_BEEP) { // Beep only
@@ -198,7 +204,17 @@ void osd_battery_low_show() {
         return;
     }
 
-    if (battery_is_low() && g_setting.osd.element[OSD_GOGGLE_BATTERY_LOW].show) {
+    bool show_icon;
+    if (g_setting.power.warning_type == SETTING_POWER_WARNING_TYPE_GRADUAL) {
+        // Icon appears at stage 2, flashes from stage 3 on.
+        const int level = battery_warn_level();
+        show_icon = (level >= BATTERY_WARN_STAGE2) &&
+                    (level < BATTERY_WARN_STAGE3 || osd_warn_flash_on());
+    } else {
+        show_icon = battery_is_low();
+    }
+
+    if (show_icon && g_setting.osd.element[OSD_GOGGLE_BATTERY_LOW].show) {
         osd_resource_path(buf, "%s", is_fhd, lowBattery_gif);
         lv_gif_set_src(g_osd_hdzero.battery_low[is_fhd], buf);
         lv_obj_clear_flag(g_osd_hdzero.battery_low[is_fhd], LV_OBJ_FLAG_HIDDEN);
@@ -216,7 +232,28 @@ void osd_battery_voltage_show(bool bShow) {
     battery_get_voltage_str(buf);
     lv_label_set_text(g_osd_hdzero.battery_voltage[is_fhd], buf);
 
-    if (battery_is_low())
+    if (g_setting.power.warning_type == SETTING_POWER_WARNING_TYPE_GRADUAL) {
+        lv_color_t color;
+        switch (battery_warn_level()) {
+        case BATTERY_WARN_STAGE1:
+            color = lv_color_make(255, 191, 0); // amber
+            break;
+        case BATTERY_WARN_STAGE2:
+            color = lv_color_make(255, 128, 0); // orange
+            break;
+        case BATTERY_WARN_STAGE3:
+            color = lv_color_make(255, 0, 0); // red
+            break;
+        case BATTERY_WARN_CRITICAL:
+            // flashing darker red
+            color = osd_warn_flash_on() ? lv_color_make(139, 0, 0) : lv_color_make(40, 0, 0);
+            break;
+        default:
+            color = lv_color_make(255, 255, 255);
+            break;
+        }
+        lv_obj_set_style_text_color(g_osd_hdzero.battery_voltage[is_fhd], color, 0);
+    } else if (battery_is_low())
         lv_obj_set_style_text_color(g_osd_hdzero.battery_voltage[is_fhd], lv_color_make(255, 0, 0), 0);
     else
         lv_obj_set_style_text_color(g_osd_hdzero.battery_voltage[is_fhd], lv_color_make(255, 255, 255), 0);

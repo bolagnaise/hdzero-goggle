@@ -16,6 +16,7 @@
 #include "ui/ui_porting.h"
 #include "ui/ui_style.h"
 #include "util/sdcard.h"
+#include "util/time.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 // local
@@ -178,6 +179,7 @@ void statubar_update(void) {
         static uint8_t beep_gap = 0;
 
         const bool low = battery_is_low();
+        const bool flash = (time_ms() / 500) & 1;
         if (low)
             lv_img_set_src(img_battery, &img_lowBattery);
         else
@@ -211,6 +213,50 @@ void statubar_update(void) {
             } else
                 lv_obj_set_style_text_color(label[STS_BATT], lv_color_hex(TEXT_COLOR_DEFAULT), 0);
             break;
+
+        case SETTING_POWER_WARNING_TYPE_GRADUAL: {
+            // Staged alarm: color escalates amber -> orange -> red -> flashing
+            // dark red, beep cadence quickens (slow at stage 2, fast at 3+),
+            // and the battery icon/label flash from stage 3 on.
+            const int level = battery_warn_level();
+            lv_color_t color = lv_color_hex(TEXT_COLOR_DEFAULT);
+            int beep_every = 0; // ticks between beeps; 0 = silent
+
+            switch (level) {
+            case BATTERY_WARN_STAGE1:
+                color = lv_color_make(255, 191, 0); // amber
+                break;
+            case BATTERY_WARN_STAGE2:
+                color = lv_color_make(255, 128, 0); // orange
+                beep_every = BEEP_INTERVAL;          // slow beep
+                break;
+            case BATTERY_WARN_STAGE3:
+                color = lv_color_make(255, 0, 0); // red
+                beep_every = 1;                   // fast beep
+                break;
+            case BATTERY_WARN_CRITICAL:
+                color = flash ? lv_color_make(139, 0, 0) : lv_color_make(40, 0, 0);
+                beep_every = 1;
+                break;
+            default:
+                break;
+            }
+
+            if (level >= BATTERY_WARN_STAGE3)
+                lv_img_set_src(img_battery, flash ? &img_lowBattery : &img_bat);
+
+            lv_obj_set_style_text_color(label[STS_BATT], color, 0);
+
+            if (beep_every > 0) {
+                if (++beep_gap >= beep_every) {
+                    beep();
+                    beep_gap = 0;
+                }
+            } else {
+                beep_gap = 0;
+            }
+            break;
+        }
         default:
             break;
         }

@@ -52,7 +52,8 @@ typedef enum {
 typedef enum {
     SETTING_POWER_WARNING_TYPE_BEEP = 0,
     SETTING_POWER_WARNING_TYPE_VISUAL = 1,
-    SETTING_POWER_WARNING_TYPE_BOTH = 2
+    SETTING_POWER_WARNING_TYPE_BOTH = 2,
+    SETTING_POWER_WARNING_TYPE_GRADUAL = 3
 } setting_power_warning_type_t;
 
 typedef enum {
@@ -76,6 +77,7 @@ typedef struct {
     setting_power_osd_display_mode_t osd_display_mode;
     bool power_ana;
     int calibration_offset;
+    int voltage_gradual; // per-cell mV; upper end of the Gradual alarm range (voltage = lower end)
 } setting_power_t;
 
 typedef enum {

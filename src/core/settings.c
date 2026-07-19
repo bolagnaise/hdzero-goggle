@@ -44,6 +44,7 @@ const setting_t g_setting_defaults = {
         .osd_display_mode = SETTING_POWER_OSD_DISPLAY_MODE_TOTAL,
         .power_ana = false,
         .calibration_offset = 0,
+        .voltage_gradual = 3700,
     },
     .record = {
         .mode_manual = false,
@@ -422,6 +423,7 @@ void settings_load(void) {
     g_setting.power.cell_count = ini_getl("power", "cell_count", g_setting_defaults.power.cell_count, SETTING_INI);
     g_setting.power.osd_display_mode = ini_getl("power", "osd_display_mode", g_setting_defaults.power.osd_display_mode, SETTING_INI);
     g_setting.power.power_ana = ini_getl("power", "power_ana_rx", g_setting_defaults.power.power_ana, SETTING_INI);
+    g_setting.power.voltage_gradual = ini_getl("power", "voltage_gradual_mv", g_setting_defaults.power.voltage_gradual, SETTING_INI);
     g_setting.power.calibration_offset = ini_getl("power", "calibration_offset_mv", g_setting_defaults.power.calibration_offset, SETTING_INI);
 
     // record

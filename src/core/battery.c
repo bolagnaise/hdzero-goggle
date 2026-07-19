@@ -39,6 +39,37 @@ bool battery_is_low() {
     return cell_volt <= g_setting.power.voltage;
 }
 
+int battery_warn_level(void) {
+    if (g_battery.type == 0) {
+        return BATTERY_WARN_CRITICAL;
+    }
+
+    const int cell_mv = battery_get_millivolts(true);
+    const int low = g_setting.power.voltage;          // lower end of the range
+    const int grad = g_setting.power.voltage_gradual; // upper end (Gradual Start)
+
+    if (cell_mv <= low) {
+        return BATTERY_WARN_CRITICAL;
+    }
+    // Above the range, or a nonsensical range (start <= low), means no warning.
+    if (low >= grad || cell_mv > grad) {
+        return BATTERY_WARN_NORMAL;
+    }
+
+    // Split the (low, grad] band into thirds; nearer the low end is worse.
+    const int third = (grad - low) / 3;
+    const int one_third = low + third;
+    const int two_third = one_third + third;
+
+    if (cell_mv <= one_third) {
+        return BATTERY_WARN_STAGE3;
+    }
+    if (cell_mv <= two_third) {
+        return BATTERY_WARN_STAGE2;
+    }
+    return BATTERY_WARN_STAGE1;
+}
+
 int battery_get_millivolts(bool per_cell) {
     if (per_cell && g_battery.type > 0) {
         return (g_battery.voltage + g_battery.offset) / g_battery.type;
