@@ -109,6 +109,7 @@ typedef struct {
     int live_audio_volume; // 0..10, live analog audio volume (cubic curve)
     int mic_gain;          // 0..7,  microphone boost gain
     int linein_gain;       // 0..7,  line-in / A-V input gain
+    int dvr_stop_delay;    // seconds, extra grace before auto-stop on signal loss
 } setting_record_t;
 
 typedef struct {

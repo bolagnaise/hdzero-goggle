@@ -174,7 +174,11 @@ static void check_source_signal(int vtmg_change) {
     if (dvr_is_recording) { // in-recording
         if (!is_valid) {
             cnt++;
-            if (cnt >= SIGNAL_LOSS_DURATION_THR) {
+            // Auto DVR Stop Delay: hold recording for an extra configurable
+            // grace period after signal loss so brief dropouts don't end the
+            // clip. This loop runs at ~25 ticks / 4 s (see SIGNAL_*_THR).
+            const int stop_thr = SIGNAL_LOSS_DURATION_THR + g_setting.record.dvr_stop_delay * 25 / 4;
+            if (cnt >= stop_thr) {
                 cnt = 0;
                 LOGI("Signal lost");
                 g_setting.ht.alarm_on_video = false;

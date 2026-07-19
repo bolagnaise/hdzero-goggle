@@ -8,6 +8,7 @@
 #include "../conf/ui.h"
 
 #include "../core/common.hh"
+#include "core/app_state.h"
 #include "driver/rtc.h"
 #include "lang/language.h"
 #include "page_common.h"
@@ -20,6 +21,11 @@ static btn_group_t btn_group_record_osd;
 static btn_group_t btn_group_record_audio;
 static btn_group_t btn_group_audio_source;
 static btn_group_t btn_group_file_naming;
+static slider_group_t slider_group_stop_delay;
+
+static slider_group_t *selected_slider_group = NULL;
+
+#define STOP_DELAY_MAX 30 // seconds
 
 static lv_coord_t col_dsc[] = {UI_RECORD_COLS};
 static lv_coord_t row_dsc[] = {UI_RECORD_ROWS};
@@ -75,8 +81,9 @@ static lv_obj_t *page_record_create(lv_obj_t *parent, panel_arr_t *arr) {
     create_btn_group_item(&btn_group_record_audio, cont, 2, _lang("Record Audio"), _lang("Yes"), _lang("No"), "", "", 4);
     create_btn_group_item(&btn_group_audio_source, cont, 3, _lang("Audio Source"), _lang("Mic"), _lang("Line In"), _lang("A/V In"), "", 5);
     create_btn_group_item(&btn_group_file_naming, cont, 2, _lang("Naming Scheme"), _lang("Digits"), _lang("Date"), "", "", 6);
+    create_slider_item(&slider_group_stop_delay, cont, _lang("Auto Stop Delay"), STOP_DELAY_MAX, g_setting.record.dvr_stop_delay, 7);
     snprintf(buf, sizeof(buf), "< %s", _lang("Back"));
-    create_label_item(cont, buf, 1, 7, 1);
+    create_label_item(cont, buf, 1, 8, 1);
 
     btn_group_set_sel(&btn_group_record_mode, g_setting.record.mode_manual ? 1 : 0);
     btn_group_set_sel(&btn_group_format, g_setting.record.format_ts ? 1 : 0);
@@ -85,6 +92,11 @@ static lv_obj_t *page_record_create(lv_obj_t *parent, panel_arr_t *arr) {
     btn_group_set_sel(&btn_group_record_audio, g_setting.record.audio ? 0 : 1);
     btn_group_set_sel(&btn_group_audio_source, g_setting.record.audio_source);
     btn_group_set_sel(&btn_group_file_naming, g_setting.record.naming);
+
+    lv_slider_set_range(slider_group_stop_delay.slider, 0, STOP_DELAY_MAX);
+    lv_slider_set_value(slider_group_stop_delay.slider, g_setting.record.dvr_stop_delay, LV_ANIM_OFF);
+    snprintf(buf, sizeof(buf), "%ds", g_setting.record.dvr_stop_delay);
+    lv_label_set_text(slider_group_stop_delay.label, buf);
 
     lv_obj_t *label2 = lv_label_create(cont);
     snprintf(buf, sizeof(buf), "%s.\n%s.\n%s.",
@@ -98,14 +110,49 @@ static lv_obj_t *page_record_create(lv_obj_t *parent, panel_arr_t *arr) {
     lv_obj_set_style_pad_top(label2, UI_PAGE_TEXT_PAD, 0);
     lv_label_set_long_mode(label2, LV_LABEL_LONG_WRAP);
     lv_obj_set_grid_cell(label2, LV_GRID_ALIGN_START, 1, 4,
-                         LV_GRID_ALIGN_START, 8, 3);
+                         LV_GRID_ALIGN_START, 9, 2);
 
     update_visibility();
 
     return page;
 }
 
+static void page_record_stop_delay_step(int delta) {
+    int value = lv_slider_get_value(slider_group_stop_delay.slider) + delta;
+    if (value < 0)
+        value = 0;
+    if (value > STOP_DELAY_MAX)
+        value = STOP_DELAY_MAX;
+    lv_slider_set_value(slider_group_stop_delay.slider, value, LV_ANIM_OFF);
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%ds", value);
+    lv_label_set_text(slider_group_stop_delay.label, buf);
+    g_setting.record.dvr_stop_delay = value;
+    ini_putl("record", "stop_delay_seconds", value, SETTING_INI);
+}
+
+static void page_record_on_roller(uint8_t key) {
+    if (selected_slider_group != &slider_group_stop_delay)
+        return;
+    if (key == DIAL_KEY_UP)
+        page_record_stop_delay_step(-1);
+    else if (key == DIAL_KEY_DOWN)
+        page_record_stop_delay_step(+1);
+}
+
+static void page_record_exit() {
+    if (selected_slider_group != NULL) {
+        lv_obj_add_style(selected_slider_group->slider, &style_silder_main, LV_PART_MAIN);
+        app_state_push(APP_STATE_SUBMENU);
+        selected_slider_group = NULL;
+    }
+}
+
 static void page_record_on_click(uint8_t key, int sel) {
+    if (selected_slider_group != NULL) {
+        page_record_exit();
+        return;
+    }
     if (sel == 0) {
         btn_group_toggle_sel(&btn_group_record_mode);
         g_setting.record.mode_manual = btn_group_get_sel(&btn_group_record_mode);
@@ -141,21 +188,25 @@ static void page_record_on_click(uint8_t key, int sel) {
             g_setting.record.naming = btn_group_get_sel(&btn_group_file_naming);
             ini_putl("record", "naming", g_setting.record.naming, SETTING_INI);
         }
+    } else if (sel == 7) {
+        app_state_push(APP_STATE_SUBMENU_ITEM_FOCUSED);
+        lv_obj_add_style(slider_group_stop_delay.slider, &style_silder_select, LV_PART_MAIN);
+        selected_slider_group = &slider_group_stop_delay;
     }
 }
 
 page_pack_t pp_record = {
     .p_arr = {
         .cur = 0,
-        .max = 8,
+        .max = 9,
     },
     .name = "Record Option",
     .create = page_record_create,
     .enter = NULL,
-    .exit = NULL,
+    .exit = page_record_exit,
     .on_created = NULL,
     .on_update = NULL,
-    .on_roller = NULL,
+    .on_roller = page_record_on_roller,
     .on_click = page_record_on_click,
     .on_right_button = NULL,
 };

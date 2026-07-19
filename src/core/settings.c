@@ -58,6 +58,7 @@ const setting_t g_setting_defaults = {
         .live_audio_volume = 10,
         .mic_gain = 4,
         .linein_gain = 3,
+        .dvr_stop_delay = 0,
     },
     .image = {
 #if defined(HDZGOGGLE) || defined(HDZGOGGLE2)
@@ -442,6 +443,7 @@ void settings_load(void) {
     g_setting.record.live_audio_volume = ini_getl("record", "live_audio_volume", g_setting_defaults.record.live_audio_volume, SETTING_INI);
     g_setting.record.mic_gain = ini_getl("record", "mic_gain", g_setting_defaults.record.mic_gain, SETTING_INI);
     g_setting.record.linein_gain = ini_getl("record", "linein_gain", g_setting_defaults.record.linein_gain, SETTING_INI);
+    g_setting.record.dvr_stop_delay = ini_getl("record", "stop_delay_seconds", g_setting_defaults.record.dvr_stop_delay, SETTING_INI);
 
     // image
     g_setting.image.oled = ini_getl("image", "oled", g_setting_defaults.image.oled, SETTING_INI);
