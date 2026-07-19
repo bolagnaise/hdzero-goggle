@@ -161,7 +161,7 @@ static lv_obj_t *page_source_create(lv_obj_t *parent, panel_arr_t *arr) {
     create_btn_group_item(&btn_group1, cont, 2, _lang("HDZero Band"), _lang("Raceband"), _lang("Lowband"), "", "", ROW_HDZ_BAND);
     btn_group_set_sel(&btn_group1, g_setting.source.hdzero_band);
 
-    create_btn_group_item(&btn_group2, cont, 2, _lang("HDZero BW"), _lang("Wide"), _lang("Narrow"), "", "", ROW_HDZ_WIDTH);
+    create_btn_group_item(&btn_group2, cont, 3, _lang("HDZero BW"), _lang("Wide"), _lang("Narrow"), _lang("Auto"), "", ROW_HDZ_WIDTH);
     btn_group_set_sel(&btn_group2, g_setting.source.hdzero_bw);
 
     create_btn_group_item(&btn_group_dial_lowband, cont, 2, _lang("Dial Lowband"), _lang("On"), _lang("Off"), "", "", ROW_DIAL_LOWBAND);

@@ -10,6 +10,7 @@
 #include "driver/hardware.h"
 #include "driver/screen.h"
 #include "lang/language.h"
+#include "core/scan_core.h"
 #include "ui/page_common.h"
 #include "ui/page_scannow.h"
 #include "ui/page_source.h"
@@ -114,7 +115,7 @@ static void page_imagesettings_enter() {
     app_state_push(APP_STATE_IMS);
     if (SOURCE_HDZERO == g_source_info.source) {
         progress_bar.start = 1;
-        HDZero_open(g_setting.source.hdzero_bw);
+        HDZero_open(hdzero_effective_bw());
         app_switch_to_hdzero(true);
         g_bShowIMS = true;
     } else if (SOURCE_HDMI_IN == g_source_info.source) {

@@ -18,6 +18,7 @@
 #include "core/input_device.h"
 #include "core/msp_displayport.h"
 #include "core/osd.h"
+#include "core/scan_core.h"
 #include "core/settings.h"
 #include "driver/dm5680.h"
 #include "driver/hardware.h"
@@ -124,6 +125,7 @@ static void check_source_signal(int vtmg_change) {
         DM5680_req_rssi();
         DM5680_req_vldflg();
         tune_channel_timer();
+        scan_core_hdz_bw_tick(); // Auto bandwidth reacquire (no-op unless BW=Auto and unlocked)
     } else if (g_source_info.source == SOURCE_AV_MODULE) {
 #if defined(HDZGOGGLE2) || defined(HDZBOXPRO)
         tune_channel_timer();

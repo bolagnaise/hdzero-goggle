@@ -26,6 +26,7 @@
 #include "driver/screen.h"
 #include "driver/uart.h"
 #include "lang/language.h"
+#include "core/scan_core.h"
 #include "ui/page_common.h"
 #include "ui/ui_main_menu.h"
 #include "ui/ui_style.h"
@@ -368,7 +369,7 @@ int8_t scan_now(void) {
         channel_status_tb[ch].is_valid = 0;
     }
 
-    HDZero_open(g_setting.source.hdzero_bw);
+    HDZero_open(hdzero_effective_bw());
     lv_bar_set_value(progressbar, 4, LV_ANIM_OFF);
     lv_timer_handler();
 

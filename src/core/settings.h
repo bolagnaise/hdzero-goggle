@@ -262,7 +262,8 @@ typedef enum {
 } setting_sources_hdzero_band_t;
 typedef enum {
     SETTING_SOURCES_HDZERO_BW_WIDE = 0,
-    SETTING_SOURCES_HDZERO_BW_NARROW = 1
+    SETTING_SOURCES_HDZERO_BW_NARROW = 1,
+    SETTING_SOURCES_HDZERO_BW_AUTO = 2
 } setting_sources_hdzero_bw_t;
 
 typedef struct {

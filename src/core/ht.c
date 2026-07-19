@@ -16,6 +16,7 @@
 #include "osd.h"
 
 #include "bmi270/accel_gyro.h"
+#include "core/scan_core.h"
 #include "core/settings.h"
 #include "core/sleep_mode.h"
 #include "driver/beep.h"
@@ -136,7 +137,7 @@ static void detect_motion(bool is_moving) {
         if (cnt == 2) {
             if (g_hw_stat.source_mode == SOURCE_MODE_HDZERO) {
                 uint8_t ch = g_setting.scan.channel - 1;
-                HDZero_open(g_setting.source.hdzero_bw);
+                HDZero_open(hdzero_effective_bw());
                 DM6302_SetChannel(g_setting.source.hdzero_band, ch & 0x7F);
             }
             if (g_hw_stat.source_mode == SOURCE_MODE_AV) {
