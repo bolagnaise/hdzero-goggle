@@ -34,22 +34,10 @@ static size_t stars_timestamps_s[MAX_STARS] = {
     0,
 };
 
-// Display bring-up bench readout (see Display_UI_BenchNext). The label is
-// only readable when the recipe under test actually displays - which is
-// exactly the signal the bench is after.
-static lv_obj_t *bench_label = NULL;
-
-static void bench_show(int idx, const char *desc) {
-    char text[96];
-
-    if (idx < 0 || !bench_label)
-        return;
-
-    snprintf(text, sizeof(text),
-             "Display test %d: %s\nright click = next, hold = restore", idx, desc);
-    lv_label_set_text(bench_label, text);
-    lv_obj_clear_flag(bench_label, LV_OBJ_FLAG_HIDDEN);
-}
+// Playback control bar visibility. The right button toggles it so the video
+// can be watched unobstructed; scrubbing and play/pause still work while it
+// is hidden.
+static bool bar_hidden = false;
 
 ///////////////////////////////////////////////////////////////////////////////
 static void time2str(uint32_t t1, uint32_t t2, char *s) {
@@ -103,6 +91,10 @@ static void update_mplayer() {
         lv_obj_add_flag(controller.bg, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(controller.bar, LV_OBJ_FLAG_HIDDEN);
     } else {
+        if (bar_hidden)
+            lv_obj_add_flag(controller.bar, LV_OBJ_FLAG_HIDDEN);
+        else
+            lv_obj_clear_flag(controller.bar, LV_OBJ_FLAG_HIDDEN);
         lv_img_set_src(controller._btn, controller.is_playing ? &img_Stop_0 : &img_Play_0);
         update_time_label(media != NULL);
     }
@@ -191,21 +183,11 @@ static void init_mplayer() {
     controller.enable = true;
     controller.is_playing = true;
     controller.value = controller.range = 0;
-
-    bench_label = lv_label_create(controller.bg);
-    lv_label_set_text(bench_label, "");
-    lv_obj_set_style_text_font(bench_label, &lv_font_montserrat_26, 0);
-    lv_obj_set_style_text_color(bench_label, lv_color_make(255, 255, 255), 0);
-    lv_obj_set_style_bg_color(bench_label, lv_color_make(0, 0, 0), 0);
-    lv_obj_set_style_bg_opa(bench_label, LV_OPA_70, 0);
-    lv_obj_set_style_pad_all(bench_label, 8, 0);
-    lv_obj_set_pos(bench_label, 20, 20);
-    lv_obj_add_flag(bench_label, LV_OBJ_FLAG_HIDDEN);
+    bar_hidden = false;
 }
 
 static void free_mplayer() {
     controller.enable = false;
-    bench_label = NULL; // child of controller.bg, freed with it
     lv_obj_del(controller._btn);
     lv_obj_del(controller._label);
     lv_obj_del(controller._slider);
@@ -267,17 +249,11 @@ uint8_t mplayer_on_key(uint8_t key) {
         media_seek(controller.value);
         break;
 
-    case RIGHT_KEY_CLICK: {
-        const char *desc = NULL;
-        bench_show(Display_UI_BenchNext(&desc), desc);
+    case RIGHT_KEY_CLICK:
+    case RIGHT_KEY_PRESS:
+        // Toggle the control bar so the video can be watched unobstructed.
+        bar_hidden = !bar_hidden;
         break;
-    }
-
-    case RIGHT_KEY_PRESS: {
-        const char *desc = NULL;
-        bench_show(Display_UI_BenchRestore(&desc), desc);
-        break;
-    }
     }
 
     update_mplayer();
@@ -415,10 +391,6 @@ void mplayer_file(char *fname) {
 }
 
 void mplayer_exit() {
-    // never leave a bench display mode running outside the player
-    const char *desc = NULL;
-    Display_UI_BenchRestore(&desc);
-
     if (play_error_label) {
         lv_obj_del(play_error_label);
         play_error_label = NULL;
