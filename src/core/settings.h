@@ -274,6 +274,7 @@ typedef struct {
     setting_sources_hdzero_bw_t hdzero_bw;
     bool dial_lowband; // channel dial also scrolls through Lowband L1-L8
     uint8_t analog_channel;
+    bool auto_detect;  // Auto Detect Source: cross over analog<->HDZero on signal loss
 } setting_sources_t;
 
 typedef struct {

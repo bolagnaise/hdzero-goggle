@@ -126,10 +126,12 @@ static void check_source_signal(int vtmg_change) {
         DM5680_req_vldflg();
         tune_channel_timer();
         scan_core_hdz_bw_tick(); // Auto bandwidth reacquire (no-op unless BW=Auto and unlocked)
+        scan_core_idle_tick();   // Auto Detect crossover (no-op unless enabled and unlocked)
     } else if (g_source_info.source == SOURCE_AV_MODULE) {
 #if defined(HDZGOGGLE2) || defined(HDZBOXPRO)
         tune_channel_timer();
 #endif
+        scan_core_idle_tick(); // Auto Detect crossover (no-op unless enabled and unlocked)
     }
 
     if (g_source_info.source == SOURCE_HDMI_IN)
