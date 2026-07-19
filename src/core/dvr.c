@@ -77,16 +77,137 @@ void dvr_update_status() {
     pthread_mutex_unlock(&dvr_mutex);
 }
 
+// Live analog audio state, so DVR playback can mute it and restore it.
+static bool live_audio_line_out_enabled = false;
+static bool live_audio_muted_for_dvr = false;
+
+bool dvr_live_audio_is_enabled(void) {
+    return live_audio_line_out_enabled;
+}
+
+// DVR playback volume, 0..8. Uses a hand-tuned lineout + DAC-digital pair so
+// each step is a smooth perceptual increment on the internal codec.
+void dvr_set_dvr_audio_volume(int volume) {
+    static const int lineout[9] = {0, 26, 28, 29, 29, 30, 30, 31, 31};
+    static const int dac[9] = {0, 134, 145, 150, 153, 155, 157, 158, 160};
+    char buf[160];
+
+    if (volume < 0)
+        volume = 0;
+    if (volume > 8)
+        volume = 8;
+
+    snprintf(buf, sizeof(buf), "amixer cset name='lineout volume' %d", lineout[volume]);
+    system_exec(buf);
+    snprintf(buf, sizeof(buf), "amixer cset name='DAC volume' %d,%d", dac[volume], dac[volume]);
+    system_exec(buf);
+    snprintf(buf, sizeof(buf), "amixer cset name='AIF1 DAC timeslot 0 volume' %d,%d", dac[volume], dac[volume]);
+    system_exec(buf);
+    snprintf(buf, sizeof(buf), "amixer cset name='AIF1 DAC timeslot 1 volume' %d,%d", dac[volume], dac[volume]);
+    system_exec(buf);
+}
+
+// Live analog audio volume, 0..10. Lineout scales linearly; the input mixer
+// gain follows a cubic so low settings stay quiet without going fully silent.
+void dvr_set_live_audio_volume(int volume) {
+    char buf[160];
+
+    if (volume < 0)
+        volume = 0;
+    if (volume > 10)
+        volume = 10;
+
+    const int lineout = (31 * volume + 5) / 10;
+    int gain = (7 * volume * volume * volume + 500) / 1000;
+    if (volume > 0 && gain == 0)
+        gain = 1;
+
+    snprintf(buf, sizeof(buf), "amixer cset name='lineout volume' %d", lineout);
+    system_exec(buf);
+    snprintf(buf, sizeof(buf), "amixer cset name='LINEINL/R to L_R output mixer gain' %d", gain);
+    system_exec(buf);
+}
+
+void dvr_set_mic_gain(int gain) {
+    char buf[128];
+    if (gain < 0)
+        gain = 0;
+    if (gain > 7)
+        gain = 7;
+    snprintf(buf, sizeof(buf), "amixer cset name='MIC1 boost AMP gain control' %d", gain);
+    system_exec(buf);
+}
+
+void dvr_set_linein_gain(int gain) {
+    char buf[128];
+    if (gain < 0)
+        gain = 0;
+    if (gain > 7)
+        gain = 7;
+    snprintf(buf, sizeof(buf), "amixer cset name='ADC input gain control' %d", gain);
+    system_exec(buf);
+    snprintf(buf, sizeof(buf), "amixer cset name='MIC2 boost AMP gain control' %d", gain);
+    system_exec(buf);
+}
+
+// Mute the live analog path while a DVR clip plays, so its audio isn't mixed
+// on top of the recording's audio.
+void dvr_mute_live_audio(void) {
+    char buf[128];
+    snprintf(buf, sizeof(buf), "%s out_linein_off", AUDIO_SEL_SH);
+    system_exec(buf);
+    system_exec("amixer cset name='LINEINL/R to L_R output mixer gain' 0");
+    live_audio_muted_for_dvr = true;
+}
+
+// Undo dvr_mute_live_audio(), but only if live audio was on and we muted it.
+void dvr_restore_live_audio(void) {
+    char buf[128];
+    if (!live_audio_muted_for_dvr || !live_audio_line_out_enabled)
+        return;
+    dvr_set_live_audio_volume(g_setting.record.live_audio_volume);
+    snprintf(buf, sizeof(buf), "%s out_linein_on", AUDIO_SEL_SH);
+    system_exec(buf);
+    live_audio_muted_for_dvr = false;
+}
+
+// Route the codec for DAC (file) playback: enable the DAC path, disable the
+// analog inputs, and apply the DVR playback volume.
+void dvr_enable_dac_playback(void) {
+    char buf[128];
+    snprintf(buf, sizeof(buf), "%s out_on", AUDIO_SEL_SH);
+    system_exec(buf);
+    snprintf(buf, sizeof(buf), "%s out_linein_off", AUDIO_SEL_SH);
+    system_exec(buf);
+    snprintf(buf, sizeof(buf), "%s out_mic1_off", AUDIO_SEL_SH);
+    system_exec(buf);
+    snprintf(buf, sizeof(buf), "%s out_mic2_off", AUDIO_SEL_SH);
+    system_exec(buf);
+    snprintf(buf, sizeof(buf), "%s out_dac_on", AUDIO_SEL_SH);
+    system_exec(buf);
+    system_exec("amixer cset name='DACL Mixer AIF1DA0L Switch' 1");
+    system_exec("amixer cset name='DACR Mixer AIF1DA0R Switch' 1");
+    system_exec("amixer cset name='DACL Mixer ADCL Switch' 0");
+    system_exec("amixer cset name='DACR Mixer ADCR Switch' 0");
+    dvr_set_dvr_audio_volume(g_setting.record.dvr_audio_volume);
+    system_exec("amixer cset name='AIF1 DAC timeslot 1 volume' 0,0");
+}
+
 void dvr_enable_line_out(bool enable) {
     char buf[128];
     if (enable) {
+        live_audio_line_out_enabled = true;
+        live_audio_muted_for_dvr = false;
         snprintf(buf, sizeof(buf), "%s out_on", AUDIO_SEL_SH);
         system_exec(buf);
+        dvr_set_live_audio_volume(g_setting.record.live_audio_volume);
         snprintf(buf, sizeof(buf), "%s out_linein_on", AUDIO_SEL_SH);
         system_exec(buf);
         snprintf(buf, sizeof(buf), "%s out_dac_off", AUDIO_SEL_SH);
         system_exec(buf);
     } else {
+        live_audio_line_out_enabled = false;
+        live_audio_muted_for_dvr = false;
         snprintf(buf, sizeof(buf), "%s out_off", AUDIO_SEL_SH);
         system_exec(buf);
     }
@@ -103,6 +224,12 @@ void dvr_select_audio_source(uint8_t source) {
         source = 2;
     snprintf(buf, sizeof(buf), "%s %s", AUDIO_SEL_SH, audio_source[source]);
     system_exec(buf);
+
+    // Apply the input gain for the newly-selected source.
+    if (source == 0)
+        dvr_set_mic_gain(g_setting.record.mic_gain);
+    else
+        dvr_set_linein_gain(g_setting.record.linein_gain);
 }
 
 // video input config

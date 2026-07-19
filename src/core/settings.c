@@ -54,6 +54,10 @@ const setting_t g_setting_defaults = {
         .audio = true,
         .audio_source = SETTING_RECORD_AUDIO_SOURCE_MIC,
         .naming = SETTING_NAMING_CONTIGUOUS,
+        .dvr_audio_volume = 8,
+        .live_audio_volume = 10,
+        .mic_gain = 4,
+        .linein_gain = 3,
     },
     .image = {
 #if defined(HDZGOGGLE) || defined(HDZGOGGLE2)
@@ -434,6 +438,10 @@ void settings_load(void) {
     g_setting.record.audio = settings_get_bool("record", "audio", g_setting_defaults.record.audio);
     g_setting.record.audio_source = ini_getl("record", "audio_source", g_setting_defaults.record.audio_source, SETTING_INI);
     g_setting.record.naming = ini_getl("record", "naming", g_setting_defaults.record.naming, SETTING_INI);
+    g_setting.record.dvr_audio_volume = ini_getl("record", "dvr_audio_volume_v2", g_setting_defaults.record.dvr_audio_volume, SETTING_INI);
+    g_setting.record.live_audio_volume = ini_getl("record", "live_audio_volume", g_setting_defaults.record.live_audio_volume, SETTING_INI);
+    g_setting.record.mic_gain = ini_getl("record", "mic_gain", g_setting_defaults.record.mic_gain, SETTING_INI);
+    g_setting.record.linein_gain = ini_getl("record", "linein_gain", g_setting_defaults.record.linein_gain, SETTING_INI);
 
     // image
     g_setting.image.oled = ini_getl("image", "oled", g_setting_defaults.image.oled, SETTING_INI);

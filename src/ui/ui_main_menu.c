@@ -14,6 +14,7 @@
 #include "driver/screen.h"
 #include "lang/language.h"
 #include "ui/page_analog_rssi.h"
+#include "ui/page_audio.h"
 #include "ui/page_autoscan.h"
 #include "ui/page_clock.h"
 #include "ui/page_common.h"
@@ -307,6 +308,7 @@ void main_menu_init(void) {
     page_packs[page_packs_count++] = &pp_power;
     page_packs[page_packs_count++] = &pp_fans;
     page_packs[page_packs_count++] = &pp_record;
+    page_packs[page_packs_count++] = &pp_audio;
     page_packs[page_packs_count++] = &pp_autoscan;
     if (g_setting.has_all_features) {
         page_packs[page_packs_count++] = &pp_elrs;

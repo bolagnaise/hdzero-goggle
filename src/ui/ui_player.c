@@ -9,6 +9,7 @@
 #include "../conf/ui.h"
 #include "common.hh"
 #include "driver/hardware.h"
+#include "core/dvr.h"
 #include "player/media.h"
 #include "record/record_definitions.h"
 #include "ui/ui_style.h"
@@ -400,6 +401,10 @@ void mplayer_file(char *fname) {
     load_stars(fname);
     init_mplayer();
     media_init(fname);
+    // Silence live analog audio and route the codec DAC so the clip's own
+    // audio plays at the configured DVR playback volume.
+    dvr_mute_live_audio();
+    dvr_enable_dac_playback();
     if (media_retimed_hz(media) == 90) {
         // the 720p90 display mode scans out the top-left 1280x720 of the
         // layout; move the control bar up into the visible window
@@ -425,4 +430,7 @@ void mplayer_exit() {
     }
     pthread_mutex_lock(&lvgl_mutex);
     free_mplayer();
+
+    // Restore the live analog audio path that playback muted.
+    dvr_restore_live_audio();
 }
