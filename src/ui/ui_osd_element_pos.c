@@ -114,6 +114,7 @@ static osd_element_t osd_element_list[OSD_GOGGLE_NUM] = {
     {"Temperature Top", "goggle_temp_top"},
     {"Temperature Left", "goggle_temp_left"},
     {"Temperature Right", "goggle_temp_right"},
+    {"Analog RSSI", "analog_rssi"},
 };
 
 // string used for the dropdown menu
