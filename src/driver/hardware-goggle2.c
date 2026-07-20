@@ -1204,15 +1204,25 @@ void Analog_Module_Power(bool ForceSet) {
     if (getHwRevision() >= HW_REV_2) {
         static bool Analog_Module_Power_State = 0;
         static bool Analog_Module_Power_State_Last = 0;
-        if (g_setting.power.power_ana == 0) {
+
+        // Reworked to mirror G1 / official firmware so the external
+        // (Expansion) analog module is powered correctly and the internal
+        // module doesn't override it:
+        //   AnalogRX Power = On   -> always powered
+        //   AnalogRX Power = Auto -> powered when Auto Detect is on, off for
+        //                            the Built-in module, and (Expansion)
+        //                            powered except while the analog module
+        //                            is the live source.
+        if (g_setting.power.power_ana != 1) {
+            Analog_Module_Power_State = 1;
+        } else if (g_setting.source.auto_detect) {
+            Analog_Module_Power_State = 1;
+        } else if (g_setting.source.analog_module == SETTING_SOURCES_ANALOG_MODULE_INTERNAL) {
             Analog_Module_Power_State = 0;
         } else {
-            if (g_source_info.source != SOURCE_AV_MODULE) {
-                Analog_Module_Power_State = 1;
-            } else {
-                Analog_Module_Power_State = 0;
-            }
+            Analog_Module_Power_State = (g_source_info.source != SOURCE_AV_MODULE) ? 1 : 0;
         }
+
         if ((Analog_Module_Power_State_Last != Analog_Module_Power_State) || (ForceSet == 1)) {
             Analog_Module_Power_State_Last = Analog_Module_Power_State;
             DM5680_ExternalAnalog_Power(Analog_Module_Power_State);
