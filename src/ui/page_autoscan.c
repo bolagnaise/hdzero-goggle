@@ -25,7 +25,7 @@ static lv_obj_t *page_autoscan_create(lv_obj_t *parent, panel_arr_t *arr) {
     lv_obj_add_style(section, &style_submenu, LV_PART_MAIN);
     lv_obj_set_size(section, UI_PAGE_VIEW_SIZE);
 
-    snprintf(buf, sizeof(buf), "%s:", _lang("Auto Scan"));
+    snprintf(buf, sizeof(buf), "%s:", _lang("Startup Scan"));
     create_text(NULL, section, false, buf, LV_MENU_ITEM_BUILDER_VARIANT_2);
 
     lv_obj_t *cont = lv_obj_create(section);
@@ -44,13 +44,13 @@ static lv_obj_t *page_autoscan_create(lv_obj_t *parent, panel_arr_t *arr) {
     lv_obj_clear_flag(pp_autoscan.p_arr.panel[2], FLAG_SELECTABLE);
 
     btn_group_t btn_group;
-    create_btn_group_item(&btn_group0, cont, 3, _lang("Auto Scan"), _lang("On"), _lang("Last"), _lang("Off"), "", 0);
-    create_btn_group_item2(&btn_group1, cont, 6, _lang("Default"), _lang("Last"), _lang("HDZero"), _lang("Analog"), _lang("AV In"), _lang("HDMI In"), _lang("Auto"), 1); // 2 rows
+    create_btn_group_item(&btn_group0, cont, 3, _lang("Startup Scan"), _lang("On"), _lang("Last"), _lang("Off"), "", 0);
+    create_btn_group_item2(&btn_group1, cont, 6, _lang("Source"), _lang("Last"), _lang("HDZero"), _lang("Analog"), _lang("AV In"), _lang("HDMI In"), _lang("Auto"), 1); // 2 rows
     snprintf(buf, sizeof(buf), "< %s", _lang("Back"));
     create_label_item(cont, buf, 1, 3, 1);
 
     lv_obj_t *label2 = lv_label_create(cont);
-    lv_label_set_text(label2, _lang("*if Auto Scan is 'Last', goggles will default to show last tuned channel"));
+    lv_label_set_text(label2, _lang("*if Startup Scan is 'Last', goggles will default to show last tuned channel"));
     lv_obj_set_style_text_font(label2, UI_PAGE_LABEL_FONT, 0);
     lv_obj_set_style_text_align(label2, LV_TEXT_ALIGN_LEFT, 0);
     lv_obj_set_style_text_color(label2, lv_color_hex(TEXT_COLOR_DEFAULT), 0);
@@ -81,7 +81,7 @@ page_pack_t pp_autoscan = {
         .cur = 0,
         .max = 4,
     },
-    .name = "Auto Scan",
+    .name = "Startup Scan",
     .create = page_autoscan_create,
     .enter = NULL,
     .exit = NULL,
