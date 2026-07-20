@@ -145,6 +145,20 @@ static bool probe_analog_present(int ana_idx) {
     return rssi > g_setting.analog_rssi.calib_min;
 }
 
+bool scan_core_is_detecting(void) {
+    if (g_app_state != APP_STATE_VIDEO)
+        return false;
+    if (g_source_info.source == SOURCE_HDZERO) {
+        const bool locked = rx_status[0].rx_valid || rx_status[1].rx_valid;
+        return !locked && (g_setting.source.auto_detect ||
+                           g_setting.source.hdzero_bw == SETTING_SOURCES_HDZERO_BW_AUTO);
+    }
+    if (g_source_info.source == SOURCE_AV_MODULE) {
+        return !g_source_info.av_bay_status && g_setting.source.auto_detect;
+    }
+    return false;
+}
+
 void scan_core_idle_tick(void) {
     static int lost = 0;
     static int cooldown = 0;

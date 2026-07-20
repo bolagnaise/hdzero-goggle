@@ -7,6 +7,7 @@
 #include "core/battery.h"
 #include "core/common.hh"
 #include "core/osd.h"
+#include "core/scan_core.h"
 #include "driver/beep.h"
 #include "lang/language.h"
 #include "ui/page_common.h"
@@ -266,10 +267,14 @@ void statubar_update(void) {
     static int analog_channel_last = 0;
     static source_t source_last = SOURCE_HDZERO;
     static setting_sources_hdzero_band_t hdzero_band_last = SETTING_SOURCES_HDZERO_BAND_RACEBAND;
+    static bool detecting_last = false;
+    const bool detecting = scan_core_is_detecting();
     uint8_t channel_changed = (hdzero_channel_last != g_setting.scan.channel) || (analog_channel_last != g_setting.source.analog_channel);
-    if (channel_changed || (source_last != g_source_info.source) || (hdzero_band_last != g_setting.source.hdzero_band)) {
+    if (channel_changed || (source_last != g_source_info.source) || (hdzero_band_last != g_setting.source.hdzero_band) || (detecting_last != detecting)) {
         memset(buf, 0, sizeof(buf));
-        if (g_source_info.source == SOURCE_HDZERO) {
+        if (detecting) {
+            snprintf(buf, sizeof(buf), "%s: %s", _lang("RF"), _lang("Detecting..."));
+        } else if (g_source_info.source == SOURCE_HDZERO) {
             snprintf(buf, sizeof(buf), "%s: HDZero %s", _lang("RF"), channel2str(1, g_setting.source.hdzero_band, g_setting.scan.channel & 0x7F));
         } else if (g_source_info.source == SOURCE_HDMI_IN) {
             snprintf(buf, sizeof(buf), "HDMI %s", _lang("In"));
@@ -292,6 +297,7 @@ void statubar_update(void) {
     analog_channel_last = g_setting.source.analog_channel;
     source_last = g_source_info.source;
     hdzero_band_last = g_setting.source.hdzero_band;
+    detecting_last = detecting;
 
     if (page_storage_is_sd_repair_active()) {
         lv_img_set_src(img_sdc, &img_sdcard);

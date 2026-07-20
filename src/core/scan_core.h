@@ -39,6 +39,11 @@ void scan_core_hdz_bw_tick(void);
 // the "Event VRX" behaviour.
 void scan_core_idle_tick(void);
 
+// True while an Auto feature (Auto Bandwidth or Auto Detect) is actively
+// searching because the current source is unlocked - used to show a
+// "Detecting..." channel indicator.
+bool scan_core_is_detecting(void);
+
 #ifdef __cplusplus
 }
 #endif
