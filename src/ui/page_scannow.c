@@ -401,11 +401,12 @@ int8_t scan_now(void) {
     }
 
     user_select_signal();
-    lv_label_set_text(label, _lang("Scanning done"));
-    if (!valid_index)
+    if (!valid_index) {
+        lv_label_set_text(label, _lang("Scanning done. No signals found."));
         return -1;
-    else
-        return valid_index;
+    }
+    lv_label_set_text(label, _lang("Scanning done"));
+    return valid_index;
 }
 
 int scan_reinit(void) {
