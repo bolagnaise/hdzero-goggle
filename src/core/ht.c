@@ -46,7 +46,14 @@ static bool is_moving = true;
 static volatile bool calibrating = false;
 static int calibration_count = 0;
 
+#if defined(HDZBOXPRO)
+// The BoxPRO's IMU is mounted rolled 30 degrees relative to the goggles, so
+// its first rotation axis is -30 not 0; without this the head-tracker tilt
+// bleeds into pan. Value taken from the reference firmware.
+static const float imu_orientation[3] = {-30.0 * DEG_TO_RAD, -90.0 * DEG_TO_RAD, (-90.0 + 23.0) * DEG_TO_RAD};
+#else
 static const float imu_orientation[3] = {0.0 * DEG_TO_RAD, -90.0 * DEG_TO_RAD, (-90.0 + 23.0) * DEG_TO_RAD};
+#endif
 
 static const int ppmMaxPulse = 500;
 static const int ppmMinPulse = -500;
