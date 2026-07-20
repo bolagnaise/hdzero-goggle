@@ -85,10 +85,21 @@ void start_running(void) {
     else
         source = g_setting.autoscan.source;
 
+    // Auto Detect boot: enable the crossover and load HDZero video directly
+    // (the crossover finds whichever protocol is present).
+    const bool boot_auto_detect = (source == SETTING_AUTOSCAN_SOURCE_AUTO);
+    if (boot_auto_detect) {
+        g_setting.source.auto_detect = true;
+        source = SETTING_AUTOSCAN_SOURCE_HDZERO;
+    }
+
     if (source == SETTING_AUTOSCAN_SOURCE_HDZERO) { // HDZero
         g_source_info.source = SOURCE_HDZERO;
         // go autoscan only if no dial up/down during initialization
-        if ((g_setting.autoscan.status == SETTING_AUTOSCAN_STATUS_ON) && (g_init_done == 0)) {
+        if (boot_auto_detect) {
+            app_state_push(APP_STATE_VIDEO);
+            app_switch_to_hdzero(true);
+        } else if ((g_setting.autoscan.status == SETTING_AUTOSCAN_STATUS_ON) && (g_init_done == 0)) {
             pthread_t pid;
             g_autoscan_exit = false;
             pthread_create(&pid, NULL, thread_autoscan, NULL);

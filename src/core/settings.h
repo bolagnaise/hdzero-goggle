@@ -30,7 +30,8 @@ typedef enum {
     SETTING_AUTOSCAN_SOURCE_HDZERO = 1,
     SETTING_AUTOSCAN_SOURCE_AV_MODULE = 2,
     SETTING_AUTOSCAN_SOURCE_AV_IN = 3,
-    SETTING_AUTOSCAN_SOURCE_HDMI_IN = 4
+    SETTING_AUTOSCAN_SOURCE_HDMI_IN = 4,
+    SETTING_AUTOSCAN_SOURCE_AUTO = 5 // boot into Auto Detect (analog/HDZero crossover)
 } setting_autoscan_source_t;
 
 typedef struct {
