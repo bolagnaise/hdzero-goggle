@@ -326,6 +326,32 @@ static void user_select_signal(void) {
     select_signal(&channel_tb[valid_channel_tb[0] & 0x7F]);
 }
 
+// True once a scan has produced results this session, so re-entering the page
+// can show them (Choose from Last Scan) instead of forcing a rescan.
+static bool has_last_scan = false;
+
+// Re-render the grid from the retained channel_status_tb (no hardware access).
+static int render_last_scan(void) {
+    int idx = 0;
+    for (int ch = 0; ch < SCAN_ALL_CH_NUM; ch++)
+        valid_channel_tb[ch] = -1;
+    for (int ch = 0; ch < SCAN_CHANNEL_NUM; ch++) {
+        if (channel_status_tb[ch].is_valid) {
+            set_signal_bar(&channel_tb[ch],
+                           channel_status_tb[ch].protocol ? 1 : channel_status_tb[ch].is_valid,
+                           channel_status_tb[ch].protocol ? 30 : channel_status_tb[ch].gain);
+            valid_channel_tb[idx++] = ch;
+        }
+    }
+    if (idx) {
+        user_select_signal();
+        lv_label_set_text(label, _lang("Last scan"));
+    } else {
+        lv_label_set_text(label, _lang("Scanning done. No signals found."));
+    }
+    return idx ? idx : -1;
+}
+
 static void user_clear_signal(void) {
     user_select_index = 0;
     for (int i = 0; i < SCAN_ALL_CH_NUM; i++) {
@@ -469,6 +495,7 @@ int scan(void) {
     g_source_info.source = SOURCE_HDZERO;
     int8_t ret = scan_now();
     g_scanning = false;
+    has_last_scan = true;
     return ret;
 }
 
@@ -485,6 +512,15 @@ void autoscan_exit(void) {
 
 static void page_scannow_enter() {
     scan_mode = ini_getl("scan", "scan_mode", SCAN_MODE_HDZERO, SETTING_INI);
+
+    // Choose from Last Scan: if this session already scanned, show those
+    // results instead of forcing a rescan (the right button rescans). The
+    // first scan-page entry each power-on still scans fresh.
+    if (has_last_scan) {
+        auto_scaned_cnt = render_last_scan();
+        return;
+    }
+
     auto_scaned_cnt = scan();
     LOGI("scan return :%d", auto_scaned_cnt);
 
@@ -552,11 +588,13 @@ static const char *scan_mode_name(void) {
     }
 }
 
-// Right button cycles HDZero -> Analog -> Dual and re-scans in that mode.
+// Right button rescans: a short press re-scans the current mode, a long press
+// cycles HDZero -> Analog -> Dual first.
 static void page_scannow_on_right_button(bool is_short) {
-    (void)is_short;
-    scan_mode = (scan_mode + 1) % 3;
-    ini_putl("scan", "scan_mode", scan_mode, SETTING_INI);
+    if (!is_short) {
+        scan_mode = (scan_mode + 1) % 3;
+        ini_putl("scan", "scan_mode", scan_mode, SETTING_INI);
+    }
     user_clear_signal();
     auto_scaned_cnt = scan();
 }
