@@ -145,6 +145,18 @@ static bool probe_analog_present(int ana_idx) {
     return rssi > g_setting.analog_rssi.calib_min;
 }
 
+void scan_analog_power(bool on) {
+    rtc6715.init(on ? 1 : 0, false);
+}
+
+bool scan_probe_analog(int ana_idx) {
+    if (ana_idx < 0)
+        return false;
+    rtc6715.set_ch(ana_idx);
+    usleep(60000); // tuner settle + RSSI thread refresh
+    return rtc6715.rssi > g_setting.analog_rssi.calib_min;
+}
+
 bool scan_core_is_detecting(void) {
     if (g_app_state != APP_STATE_VIDEO)
         return false;

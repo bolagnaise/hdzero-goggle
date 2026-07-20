@@ -44,6 +44,11 @@ void scan_core_idle_tick(void);
 // "Detecting..." channel indicator.
 bool scan_core_is_detecting(void);
 
+// Analog scanning helpers (for the Analog/Dual scan modes). Power the analog
+// receiver on for a scan, probe a channel for signal, then power it off.
+void scan_analog_power(bool on);
+bool scan_probe_analog(int ana_idx); // requires scan_analog_power(true) first
+
 #ifdef __cplusplus
 }
 #endif

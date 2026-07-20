@@ -54,7 +54,20 @@ typedef struct {
     bool is_valid;
     int gain;
     int bw;
+    int protocol;  // 0 = HDZero, 1 = analog
+    int analog_ch; // analog channel index found here, or -1
 } channel_status_t;
+
+// Scan mode: which protocol(s) to scan for.
+enum {
+    SCAN_MODE_HDZERO = 0,
+    SCAN_MODE_ANALOG = 1,
+    SCAN_MODE_DUAL = 2,
+};
+static int scan_mode = SCAN_MODE_HDZERO;
+
+static void page_scannow_tune_selected(void);
+static const char *scan_mode_name(void);
 
 typedef struct {
     lv_obj_t *img0;
@@ -353,7 +366,7 @@ int8_t scan_now(void) {
     uint8_t valid_index;
     char buf[128];
 
-    snprintf(buf, sizeof(buf), "%s...", _lang("Scanning"));
+    snprintf(buf, sizeof(buf), "%s %s... (%s %s)", scan_mode_name(), _lang("Scanning"), _lang("right button"), _lang("changes mode"));
     lv_label_set_text(label, buf);
     lv_bar_set_value(progressbar, 0, LV_ANIM_OFF);
     lv_timer_handler();
@@ -367,27 +380,61 @@ int8_t scan_now(void) {
     for (ch = 0; ch < SCAN_ALL_CH_NUM; ch++) {
         valid_channel_tb[ch] = -1;
         channel_status_tb[ch].is_valid = 0;
+        channel_status_tb[ch].protocol = 0;
+        channel_status_tb[ch].analog_ch = -1;
     }
 
-    HDZero_open(hdzero_effective_bw());
-    lv_bar_set_value(progressbar, 4, LV_ANIM_OFF);
-    lv_timer_handler();
-
-    for (ch = 0; ch < total; ch++) {
-        band_t band = g_setting.source.hdzero_band;
-        uint8_t band_ch = ch;
-        if (g_setting.source.dial_lowband) {
-            band = (ch < BASE_CH_NUM) ? RACE_BAND : LOW_BAND;
-            band_ch = (ch < BASE_CH_NUM) ? ch : ch - BASE_CH_NUM;
-        }
-        scan_channel(band, band_ch, &gain, &valid);
-        if (valid) {
-            channel_status_tb[ch].is_valid = 1;
-            channel_status_tb[ch].gain = gain;
-            set_signal_bar(&channel_tb[ch], channel_status_tb[ch].is_valid, channel_status_tb[ch].gain);
-        }
-        lv_bar_set_value(progressbar, ch + 5, LV_ANIM_OFF);
+    // HDZero pass (skipped in Analog-only mode).
+    if (scan_mode != SCAN_MODE_ANALOG) {
+        HDZero_open(hdzero_effective_bw());
+        lv_bar_set_value(progressbar, 4, LV_ANIM_OFF);
         lv_timer_handler();
+
+        for (ch = 0; ch < total; ch++) {
+            band_t band = g_setting.source.hdzero_band;
+            uint8_t band_ch = ch;
+            if (g_setting.source.dial_lowband) {
+                band = (ch < BASE_CH_NUM) ? RACE_BAND : LOW_BAND;
+                band_ch = (ch < BASE_CH_NUM) ? ch : ch - BASE_CH_NUM;
+            }
+            scan_channel(band, band_ch, &gain, &valid);
+            if (valid) {
+                channel_status_tb[ch].is_valid = 1;
+                channel_status_tb[ch].gain = gain;
+                channel_status_tb[ch].protocol = 0;
+                set_signal_bar(&channel_tb[ch], channel_status_tb[ch].is_valid, channel_status_tb[ch].gain);
+            }
+            lv_bar_set_value(progressbar, ch + 5, LV_ANIM_OFF);
+            lv_timer_handler();
+        }
+    }
+
+    // Analog pass (Analog or Dual mode). Probe the analog channel that shares
+    // each grid position's frequency; in Dual mode only where HDZero found
+    // nothing. The HDZero receiver is closed first so the two don't fight.
+    if (scan_mode != SCAN_MODE_HDZERO) {
+        HDZero_Close();
+        scan_analog_power(true);
+        for (ch = 0; ch < total; ch++) {
+            if (scan_mode == SCAN_MODE_DUAL && channel_status_tb[ch].is_valid)
+                continue;
+            band_t band = g_setting.source.hdzero_band;
+            uint8_t band_ch = ch;
+            if (g_setting.source.dial_lowband) {
+                band = (ch < BASE_CH_NUM) ? RACE_BAND : LOW_BAND;
+                band_ch = (ch < BASE_CH_NUM) ? ch : ch - BASE_CH_NUM;
+            }
+            int ana = scan_hdz_crossover_analog((band == LOW_BAND) ? 1 : 0, band_ch);
+            if (ana >= 0 && scan_probe_analog(ana)) {
+                channel_status_tb[ch].is_valid = 1;
+                channel_status_tb[ch].protocol = 1;
+                channel_status_tb[ch].analog_ch = ana;
+                set_signal_bar(&channel_tb[ch], 1, 30);
+            }
+            lv_bar_set_value(progressbar, ch + 5, LV_ANIM_OFF);
+            lv_timer_handler();
+        }
+        scan_analog_power(false);
     }
     lv_bar_set_value(progressbar, total + 5, LV_ANIM_OFF);
 
@@ -437,6 +484,7 @@ void autoscan_exit(void) {
 }
 
 static void page_scannow_enter() {
+    scan_mode = ini_getl("scan", "scan_mode", SCAN_MODE_HDZERO, SETTING_INI);
     auto_scaned_cnt = scan();
     LOGI("scan return :%d", auto_scaned_cnt);
 
@@ -444,8 +492,8 @@ static void page_scannow_enter() {
         if (!g_autoscan_exit)
             g_autoscan_exit = true;
 
-        app_state_push(APP_STATE_VIDEO);
-        app_switch_to_hdzero(false);
+        user_select_index = 0;
+        page_scannow_tune_selected();
     }
 
     if (auto_scaned_cnt == -1)
@@ -470,9 +518,47 @@ static void page_scannow_on_roller(uint8_t key) {
     select_signal(&channel_tb[valid_channel_tb[user_select_index] & 0x07F]);
 }
 
-static void page_scannow_on_click(uint8_t key, int sel) {
+// Tune to the currently-selected scan result, routing to analog or HDZero
+// depending on which protocol was found there.
+static void page_scannow_tune_selected(void) {
     app_state_push(APP_STATE_VIDEO);
+
+    if (valid_channel_tb[0] != -1) {
+        const int ch = valid_channel_tb[user_select_index] & 0x7F;
+        if (channel_status_tb[ch].protocol == 1 && channel_status_tb[ch].analog_ch >= 0) {
+            g_setting.source.analog_channel = channel_status_tb[ch].analog_ch + 1;
+            ini_putl("source", "analog_channel", g_setting.source.analog_channel, SETTING_INI);
+            app_switch_to_analog(false);
+            g_source_info.source = SOURCE_AV_MODULE;
+            return;
+        }
+    }
     app_switch_to_hdzero(false);
+    g_source_info.source = SOURCE_HDZERO;
+}
+
+static void page_scannow_on_click(uint8_t key, int sel) {
+    page_scannow_tune_selected();
+}
+
+static const char *scan_mode_name(void) {
+    switch (scan_mode) {
+    case SCAN_MODE_ANALOG:
+        return _lang("Analog");
+    case SCAN_MODE_DUAL:
+        return _lang("Dual");
+    default:
+        return "HDZero";
+    }
+}
+
+// Right button cycles HDZero -> Analog -> Dual and re-scans in that mode.
+static void page_scannow_on_right_button(bool is_short) {
+    (void)is_short;
+    scan_mode = (scan_mode + 1) % 3;
+    ini_putl("scan", "scan_mode", scan_mode, SETTING_INI);
+    user_clear_signal();
+    auto_scaned_cnt = scan();
 }
 
 page_pack_t pp_scannow = {
@@ -484,5 +570,5 @@ page_pack_t pp_scannow = {
     .on_update = NULL,
     .on_roller = page_scannow_on_roller,
     .on_click = page_scannow_on_click,
-    .on_right_button = NULL,
+    .on_right_button = page_scannow_on_right_button,
 };
